@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		50F9D129303C7F120010B457 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 50AA0003303C79840010B457 /* GRDB */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		50F9D10D303C79840010B457 /* AI writer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "AI writer.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				50F9D129303C7F120010B457 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +70,7 @@
 			);
 			name = "AI writer";
 			packageProductDependencies = (
+				50AA0003303C79840010B457 /* GRDB */,
 			);
 			productName = "AI writer";
 			productReference = 50F9D10D303C79840010B457 /* AI writer.app */;
@@ -94,6 +100,9 @@
 			);
 			mainGroup = 50F9D104303C79840010B457;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				50AA0002303C79840010B457 /* XCRemoteSwiftPackageReference "GRDB" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 50F9D10E303C79840010B457 /* Products */;
 			projectDirPath = "";
@@ -315,6 +324,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		50AA0002303C79840010B457 /* XCRemoteSwiftPackageReference "GRDB" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 7.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		50AA0003303C79840010B457 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 50AA0002303C79840010B457 /* XCRemoteSwiftPackageReference "GRDB" */;
+			productName = GRDB;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 50F9D105303C79840010B457 /* Project object */;
 }

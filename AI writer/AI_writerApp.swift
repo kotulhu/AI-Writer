@@ -1,17 +1,21 @@
-//
-//  AI_writerApp.swift
-//  AI writer
-//
-//  Created by El Gato on 24.08.2026.
-//
-
 import SwiftUI
 
 @main
 struct AI_writerApp: App {
+    @State private var workspace: WorkspaceViewModel
+
+    init() {
+        workspace = WorkspaceViewModel(database: DatabaseService.live())
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environment(workspace)
+                .frame(minWidth: 1080, minHeight: 700)
+        }
+        Settings {
+            SettingsView()
         }
     }
 }
