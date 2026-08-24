@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct SceneBoardView: View {
@@ -74,6 +75,8 @@ struct SceneCardView: View {
 
     var body: some View {
         let isSelected = workspace.selectedSceneID == scene.id
+        let isFirst = workspace.scenes.first?.id == scene.id
+        let isLast = workspace.scenes.last?.id == scene.id
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "text.justify.left")
@@ -106,9 +109,32 @@ struct SceneCardView: View {
             HStack {
                 Label("\(scene.content.wordCount)", systemImage: "character.cursor.ibeam")
                 Spacer()
-                Image(systemName: "hand.draw")
-                    .foregroundStyle(.tertiary)
-                    .help("Перетащите карточку, чтобы изменить порядок, или бросьте на другую — склеить сцены")
+                HStack(spacing: 2) {
+                    Button {
+                        Task { await workspace.moveScene(scene.id, offset: -1) }
+                    } label: {
+                        Image(systemName: "chevron.up")
+                            .frame(width: 18, height: 14)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(isFirst)
+                    .help("Поменять местами с предыдущей сценой")
+
+                    Divider()
+                        .frame(height: 10)
+
+                    Button {
+                        Task { await workspace.moveScene(scene.id, offset: 1) }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .frame(width: 18, height: 14)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(isLast)
+                    .help("Поменять местами со следующей сценой")
+                }
+                .background(Color(nsColor: .quaternarySystemFill))
+                .clipShape(RoundedRectangle(cornerRadius: 5))
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
@@ -126,12 +152,13 @@ struct SceneCardView: View {
         .onTapGesture {
             workspace.selectedSceneID = scene.id
         }
-        .draggable(scene)
-        .dropDestination(for: SceneBlock.self) { payload, _ in
-            guard let dropped = payload.first, dropped.id != scene.id else { return false }
-            workspace.proposeMerge(source: dropped, into: scene)
-            return true
-        } isTargeted: { isDropTargeted = $0 }
+        .onDrag { scene.itemProvider }
+        .onDrop(of: [SceneBlock.sceneType], isTargeted: $isDropTargeted) { providers in
+            Self.receive(providers) { dropped in
+                guard let dropped, dropped.id != scene.id else { return }
+                workspace.proposeMerge(source: dropped, into: scene)
+            }
+        }
         .contextMenu {
             Button("Дублировать") {
                 Task { await workspace.duplicateScene(scene.id) }
@@ -143,8 +170,23 @@ struct SceneCardView: View {
         }
     }
 
+    static func receive(
+        _ providers: [NSItemProvider],
+        handler: @escaping @MainActor (SceneBlock?) -> Void
+    ) -> Bool {
+        guard let provider = providers.first else { return false }
+        let typeIdentifier = SceneBlock.sceneType.identifier
+        _ = provider.loadDataRepresentation(forTypeIdentifier: typeIdentifier) { data, _ in
+            let decoded = data.flatMap { try? JSONDecoder().decode(SceneBlock.self, from: $0) }
+            Task { @MainActor in
+                handler(decoded)
+            }
+        }
+        return true
+    }
+
     private func strokeColor(isSelected: Bool) -> Color {
-        if isDropTargeted { return .red.opacity(0.9) }
+        if isDropTargeted { return Color.red.opacity(0.9) }
         return isSelected ? Color.accentColor : Color.primary.opacity(0.08)
     }
 }
@@ -157,7 +199,7 @@ struct GapDropZone: View {
     var body: some View {
         Rectangle()
             .fill(Color.clear)
-            .frame(height: isTargeted ? 36 : 10)
+            .frame(height: isTargeted ? 36 : 12)
             .contentShape(Rectangle())
             .overlay {
                 if isTargeted {
@@ -168,10 +210,11 @@ struct GapDropZone: View {
                 }
             }
             .animation(.easeInOut(duration: 0.12), value: isTargeted)
-            .dropDestination(for: SceneBlock.self) { payload, _ in
-                guard let dropped = payload.first else { return false }
-                Task { await workspace.moveScene(dropped, toGap: index) }
-                return true
-            } isTargeted: { isTargeted = $0 }
+            .onDrop(of: [SceneBlock.sceneType], isTargeted: $isTargeted) { providers in
+                SceneCardView.receive(providers) { dropped in
+                    guard let dropped else { return }
+                    Task { await workspace.moveScene(dropped, toGap: index) }
+                }
+            }
     }
 }

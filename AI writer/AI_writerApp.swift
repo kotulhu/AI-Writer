@@ -16,6 +16,7 @@ struct AI_writerApp: App {
         }
         Settings {
             SettingsView()
+                .environment(workspace)
         }
     }
 }

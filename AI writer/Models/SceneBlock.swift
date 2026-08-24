@@ -1,3 +1,4 @@
+import AppKit
 import CoreTransferable
 import Foundation
 import GRDB
@@ -43,5 +44,17 @@ extension SceneBlock: Transferable {
 
     static var transferRepresentation: some TransferRepresentation {
         CodableRepresentation(contentType: SceneBlock.sceneType)
+    }
+}
+
+extension SceneBlock {
+    var itemProvider: NSItemProvider {
+        let provider = NSItemProvider()
+        let payload = try? JSONEncoder().encode(self)
+        provider.registerDataRepresentation(forTypeIdentifier: Self.sceneType.identifier, visibility: .all) { completion in
+            completion(payload, nil)
+            return nil
+        }
+        return provider
     }
 }
