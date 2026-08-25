@@ -12,16 +12,18 @@ final class EditorActionBox: NSObject {
 
 final class RichTextHandle {
     fileprivate weak var textView: NSTextView?
-    fileprivate var emitChange: (() -> Void)?
 
     var plainText: String {
         textView?.string ?? ""
     }
 
+    var attributedText: NSAttributedString {
+        textView?.attributedString() ?? NSAttributedString()
+    }
+
     func apply(_ action: WriterFormatAction) {
         guard let textView else { return }
         WriterText.apply(action, to: textView)
-        emitChange?()
     }
 
     func replace(range: NSRange, with text: String) -> String? {
@@ -35,9 +37,12 @@ final class RichTextHandle {
         let anchorAttributes = storage.length > 0
             ? storage.attributes(at: min(clamped.location, storage.length - 1), effectiveRange: nil)
             : [:]
+        textView.undoManager?.beginUndoGrouping()
+        defer { textView.undoManager?.endUndoGrouping() }
+        _ = textView.shouldChangeText(in: clamped, replacementString: text)
         storage.replaceCharacters(in: clamped, with: NSAttributedString(string: text, attributes: anchorAttributes))
         let markdown = WriterText.markdown(from: textView.attributedString())
-        emitChange?()
+        textView.didChangeText()
         return markdown
     }
 }
@@ -65,6 +70,8 @@ struct SceneEditorView: View {
     @State private var textHandle = RichTextHandle()
 
     static let synonymsActionKey = "ai-writer-synonyms"
+    static let splitActionKey = "ai-writer-split"
+    static let joinNextActionKey = "ai-writer-join-next"
 
     private var scene: SceneBlock? {
         workspace.selectedScene
@@ -87,9 +94,16 @@ struct SceneEditorView: View {
         .onAppear(perform: syncFromScene)
         .onAppear {
             actionBox.handler = { key in
-                if key == Self.synonymsActionKey {
+                switch key {
+                case Self.synonymsActionKey:
                     findSynonymsForSelection()
-                } else {
+                case Self.splitActionKey:
+                    splitSceneAtCaret()
+                case Self.joinNextActionKey:
+                    if let scene {
+                        Task { await workspace.joinWithNext(scene.id) }
+                    }
+                default:
                     rephraseSelected(RephraseStyle(rawValue: key) ?? .artistic)
                 }
             }
@@ -195,6 +209,13 @@ struct SceneEditorView: View {
             formatButton("Разделитель сцены", icon: "minus") {
                 textHandle.apply(.rule)
             }
+
+            Divider()
+                .frame(height: 14)
+
+            formatButton("Разделить сцену по курсору", icon: "scissors") {
+                splitSceneAtCaret()
+            }
             Spacer()
         }
         .buttonStyle(.borderless)
@@ -234,7 +255,8 @@ struct SceneEditorView: View {
                 workspace.updateSceneContent(scene.id, content: newValue)
             },
             onSelectionChange: { selectionRange = $0 },
-            menuItemsBuilder: rephraseMenuItems
+            menuItemsBuilder: rephraseMenuItems,
+            structuralItemsBuilder: structuralMenuItems
         )
         .onChange(of: markdownText) { _, newValue in
             workspace.updateSceneContent(scene.id, content: newValue)
@@ -349,6 +371,26 @@ struct SceneEditorView: View {
         }
     }
 
+    private func splitSceneAtCaret() {
+        guard let scene else { return }
+        let text = textHandle.attributedText
+        let length = (text.string as NSString).length
+        let location = min(max(selectionRange.location, 0), length)
+        let head = location > 0
+            ? text.attributedSubstring(from: NSRange(location: 0, length: location))
+            : NSAttributedString()
+        let tail = location < length
+            ? text.attributedSubstring(from: NSRange(location: location, length: length - location))
+            : NSAttributedString()
+        Task {
+            await workspace.splitScene(
+                scene.id,
+                firstContent: WriterText.markdown(from: head),
+                secondContent: WriterText.markdown(from: tail)
+            )
+        }
+    }
+
     private func findSynonymsForSelection() {
         guard let scene, selectionRange.length > 0 else { return }
         let plain = textHandle.plainText as NSString
@@ -412,6 +454,30 @@ struct SceneEditorView: View {
         workspace.cancelRephrase()
     }
 
+    private func structuralMenuItems() -> [NSMenuItem] {
+        let split = NSMenuItem(
+            title: "Разделить сцену здесь",
+            action: #selector(EditorActionBox.run(_:)),
+            keyEquivalent: ""
+        )
+        split.target = actionBox
+        split.representedObject = Self.splitActionKey
+        var items: [NSMenuItem] = [split]
+        if let scene,
+           let index = workspace.scenes.firstIndex(where: { $0.id == scene.id }),
+           index < workspace.scenes.count - 1 {
+            let join = NSMenuItem(
+                title: "Объединить со следующей сценой",
+                action: #selector(EditorActionBox.run(_:)),
+                keyEquivalent: ""
+            )
+            join.target = actionBox
+            join.representedObject = Self.joinNextActionKey
+            items.append(join)
+        }
+        return items
+    }
+
     private func rephraseMenuItems() -> [NSMenuItem] {
         let submenu = NSMenu(title: "Переформулировать")
         for style in RephraseStyle.allCases {
@@ -439,15 +505,22 @@ struct SceneEditorView: View {
 
 private final class MenuableTextView: NSTextView {
     var menuItemsBuilder: (() -> [NSMenuItem])?
+    var structuralItemsBuilder: (() -> [NSMenuItem])?
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let baseMenu = super.menu(for: event)
-        if selectedRange().length > 0, let baseMenu {
+        guard let baseMenu else { return nil }
+        if selectedRange().length > 0 {
             let extraItems = menuItemsBuilder?() ?? []
             if !extraItems.isEmpty {
                 baseMenu.addItem(.separator())
                 extraItems.forEach(baseMenu.addItem)
             }
+        }
+        let structural = structuralItemsBuilder?() ?? []
+        if !structural.isEmpty {
+            baseMenu.addItem(.separator())
+            structural.forEach(baseMenu.addItem)
         }
         return baseMenu
     }
@@ -459,6 +532,7 @@ struct SelectionTextView: NSViewRepresentable {
     var onChangeMarkdown: (String) -> Void
     var onSelectionChange: (NSRange) -> Void
     var menuItemsBuilder: () -> [NSMenuItem]
+    var structuralItemsBuilder: () -> [NSMenuItem]
 
     static let editorFont: NSFont = WriterText.bodyFont
 
@@ -500,6 +574,10 @@ struct SelectionTextView: NSViewRepresentable {
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.smartInsertDeleteEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.isGrammarCheckingEnabled = false
+        textView.isAutomaticLinkDetectionEnabled = false
+        textView.isAutomaticTextCompletionEnabled = false
         textView.isVerticallyResizable = true
         textView.textContainer?.widthTracksTextView = true
         textView.font = Self.editorFont
@@ -515,12 +593,13 @@ struct SelectionTextView: NSViewRepresentable {
 
         context.coordinator.lastEmittedMarkdown = markdown
         handle.textView = textView
-        handle.emitChange = { [weak coordinator = context.coordinator] in
-            coordinator?.emitMarkdown()
-        }
         textView.menuItemsBuilder = { [weak coordinator = context.coordinator] in
             guard let coordinator else { return [] }
             return coordinator.parent.menuItemsBuilder()
+        }
+        textView.structuralItemsBuilder = { [weak coordinator = context.coordinator] in
+            guard let coordinator else { return [] }
+            return coordinator.parent.structuralItemsBuilder()
         }
 
         let scrollView = NSScrollView()

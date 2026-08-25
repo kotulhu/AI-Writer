@@ -399,18 +399,22 @@ enum WriterText {
             .map(\.rangeValue)
             .filter { $0.location <= length && NSMaxRange($0) <= length }
 
+        textView.undoManager?.beginUndoGrouping()
+        defer { textView.undoManager?.endUndoGrouping() }
+
         switch action {
-        case .bold: toggleInlineTrait(.bold, ranges: selected, storage: storage)
-        case .italic: toggleInlineTrait(.italic, ranges: selected, storage: storage)
-        case .strike: toggleStrike(ranges: selected, storage: storage)
-        case .code: toggleCode(ranges: selected, storage: storage)
-        case .heading(let level): toggleHeading(level, ranges: selected, storage: storage)
-        case .bullet: toggleList(.disc, ranges: selected, storage: storage)
-        case .ordered: toggleList(.decimal, ranges: selected, storage: storage)
-        case .quote: toggleQuote(ranges: selected, storage: storage)
+        case .bold: toggleInlineTrait(.bold, ranges: selected, storage: storage, textView: textView)
+        case .italic: toggleInlineTrait(.italic, ranges: selected, storage: storage, textView: textView)
+        case .strike: toggleStrike(ranges: selected, storage: storage, textView: textView)
+        case .code: toggleCode(ranges: selected, storage: storage, textView: textView)
+        case .heading(let level): toggleHeading(level, ranges: selected, storage: storage, textView: textView)
+        case .bullet: toggleList(.disc, ranges: selected, storage: storage, textView: textView)
+        case .ordered: toggleList(.decimal, ranges: selected, storage: storage, textView: textView)
+        case .quote: toggleQuote(ranges: selected, storage: storage, textView: textView)
         case .rule: insertRule(at: selected.first?.location ?? length, storage: storage, textView: textView)
         }
 
+        textView.didChangeText()
         syncTypingAttributes(textView)
     }
 
@@ -461,7 +465,8 @@ enum WriterText {
     private static func toggleInlineTrait(
         _ trait: NSFontDescriptor.SymbolicTraits,
         ranges: [NSRange],
-        storage: NSTextStorage
+        storage: NSTextStorage,
+        textView: NSTextView
     ) {
         let manager = NSFontManager.shared
         for range in ranges {
@@ -469,6 +474,7 @@ enum WriterText {
             let effective = range.length > 0
                 ? range
                 : NSRange(location: min(range.location, max(storage.length - 1, 0)), length: 1)
+            _ = textView.shouldChangeText(in: effective, replacementString: "")
             storage.enumerateAttribute(.font, in: effective) { value, subRange, _ in
                 guard let font = value as? NSFont else { return }
                 let converted = adding
@@ -479,12 +485,13 @@ enum WriterText {
         }
     }
 
-    private static func toggleStrike(ranges: [NSRange], storage: NSTextStorage) {
+    private static func toggleStrike(ranges: [NSRange], storage: NSTextStorage, textView: NSTextView) {
         for range in ranges {
             let probe = range.length > 0 ? range : NSRange(location: min(range.location, max(storage.length - 1, 0)), length: 1)
             let current = storage.attribute(.strikethroughStyle, at: probe.location, effectiveRange: nil) as? Int ?? 0
             let next: Int = current != 0 ? 0 : NSUnderlineStyle.single.rawValue
             let effective = range.length > 0 ? range : probe
+            _ = textView.shouldChangeText(in: effective, replacementString: "")
             storage.addAttribute(.strikethroughStyle, value: next, range: effective)
         }
     }
@@ -494,11 +501,12 @@ enum WriterText {
         return family.contains("menlo") || family.contains("mono")
     }
 
-    private static func toggleCode(ranges: [NSRange], storage: NSTextStorage) {
+    private static func toggleCode(ranges: [NSRange], storage: NSTextStorage, textView: NSTextView) {
         for range in ranges {
             let probe = range.length > 0 ? range : NSRange(location: min(range.location, max(storage.length - 1, 0)), length: 1)
             let turningOn = !isCodeFont(storage.attribute(.font, at: probe.location, effectiveRange: nil) as? NSFont)
             let effective = range.length > 0 ? range : probe
+            _ = textView.shouldChangeText(in: effective, replacementString: "")
             storage.enumerateAttribute(.font, in: effective) { value, subRange, _ in
                 guard let font = value as? NSFont else { return }
                 if turningOn {
@@ -517,8 +525,9 @@ enum WriterText {
         }
     }
 
-    private static func toggleHeading(_ level: Int, ranges: [NSRange], storage: NSTextStorage) {
+    private static func toggleHeading(_ level: Int, ranges: [NSRange], storage: NSTextStorage, textView: NSTextView) {
         for paragraph in paragraphRanges(around: ranges, in: storage) {
+            _ = textView.shouldChangeText(in: paragraph, replacementString: "")
             let current = storage.attribute(headingKey, at: paragraph.location, effectiveRange: nil) as? Int
             if current == level {
                 storage.removeAttribute(headingKey, range: paragraph)
@@ -532,8 +541,9 @@ enum WriterText {
         }
     }
 
-    private static func toggleList(_ marker: NSTextList.MarkerFormat, ranges: [NSRange], storage: NSTextStorage) {
+    private static func toggleList(_ marker: NSTextList.MarkerFormat, ranges: [NSRange], storage: NSTextStorage, textView: NSTextView) {
         for paragraph in paragraphRanges(around: ranges, in: storage) {
+            _ = textView.shouldChangeText(in: paragraph, replacementString: "")
             let style = storage.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil) as? NSParagraphStyle
             let existing = style?.textLists.first
             let sameKind = existing.map { isDecimal($0) == (marker == .decimal) } ?? false
@@ -546,8 +556,9 @@ enum WriterText {
         }
     }
 
-    private static func toggleQuote(ranges: [NSRange], storage: NSTextStorage) {
+    private static func toggleQuote(ranges: [NSRange], storage: NSTextStorage, textView: NSTextView) {
         for paragraph in paragraphRanges(around: ranges, in: storage) {
+            _ = textView.shouldChangeText(in: paragraph, replacementString: "")
             let isQuote = (storage.attribute(quoteKey, at: paragraph.location, effectiveRange: nil) as? Bool) == true
             if isQuote {
                 storage.removeAttribute(quoteKey, range: paragraph)
@@ -584,6 +595,10 @@ enum WriterText {
         var insertion = NSMutableAttributedString(string: "\n", attributes: baseAttributes())
         insertion.append(ruleParagraph())
         insertion.append(NSAttributedString(string: "\n", attributes: baseAttributes()))
+        _ = textView.shouldChangeText(
+            in: NSRange(location: safeLocation, length: 0),
+            replacementString: insertion.string
+        )
         storage.insert(insertion, at: safeLocation)
         let newPosition = min(safeLocation + insertion.length, (textView.string as NSString).length)
         textView.setSelectedRanges(

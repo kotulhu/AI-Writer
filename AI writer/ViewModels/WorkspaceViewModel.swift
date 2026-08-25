@@ -27,6 +27,21 @@ struct SynonymRequest: Equatable {
     let sceneID: UUID
 }
 
+struct ProviderUsage: Equatable {
+    let usage: Double
+    let limit: Double?
+    let isFreeTier: Bool
+
+    var usedPercent: Double? {
+        guard let limit, limit > 0 else { return nil }
+        return min(100, max(0, usage / limit * 100))
+    }
+
+    var remainingPercent: Double? {
+        usedPercent.map { 100 - $0 }
+    }
+}
+
 @MainActor
 @Observable
 final class WorkspaceViewModel {
@@ -57,6 +72,8 @@ final class WorkspaceViewModel {
 
     var synonymRequest: SynonymRequest?
     var synonymVariants: [String] = []
+
+    var providerUsage: [String: ProviderUsage] = [:]
 
     private var saveTasks: [UUID: Task<Void, Never>] = [:]
 
@@ -241,6 +258,64 @@ final class WorkspaceViewModel {
         mergeCandidate = MergeCandidate(source: source, target: target)
     }
 
+    func splitScene(_ id: UUID, firstContent: String, secondContent: String) async {
+        guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
+        var head = scenes[index]
+        var tail = SceneBlock.blank(in: head.manuscriptId, position: index + 1)
+        let baseTitle = head.title.isEmpty ? "Новая сцена" : head.title
+        tail.title = baseTitle + " (2)"
+        head.content = firstContent
+        head.touch()
+        tail.content = secondContent
+
+        var reordered = scenes
+        reordered[index] = head
+        reordered.insert(tail, at: index + 1)
+        applyPositions(reordered)
+        selectedSceneID = tail.id
+        do {
+            _ = try await database.insert(tail)
+            try await database.update(head)
+            await persistPositions()
+        } catch {
+            errorMessage = "Не удалось разделить сцену: \(error.localizedDescription)"
+            await reloadScenes()
+        }
+    }
+
+    func joinWithNext(_ id: UUID) async {
+        await joinNeighbor(id, offset: 1)
+    }
+
+    func joinWithPrevious(_ id: UUID) async {
+        await joinNeighbor(id, offset: -1)
+    }
+
+    private func joinNeighbor(_ id: UUID, offset: Int) async {
+        guard let index = scenes.firstIndex(where: { $0.id == id }) else { return }
+        let otherIndex = index + offset
+        guard scenes.indices.contains(otherIndex) else { return }
+        let targetIndex = min(index, otherIndex)
+        let sourceIndex = max(index, otherIndex)
+        var target = scenes[targetIndex]
+        let source = scenes[sourceIndex]
+        target.merged(with: source, otherFirst: false)
+        scenes[targetIndex] = target
+        scenes.remove(at: sourceIndex)
+        applyPositions(scenes)
+        selectedSceneID = target.id
+        do {
+            try await database.merge(
+                target: target,
+                removed: source,
+                positions: scenes.map { (id: $0.id, position: $0.position) }
+            )
+        } catch {
+            errorMessage = "Не удалось сохранить склейку: \(error.localizedDescription)"
+            await reloadScenes()
+        }
+    }
+
     func performMerge(otherFirst: Bool) async {
         guard let candidate = mergeCandidate else { return }
         mergeCandidate = nil
@@ -413,6 +488,7 @@ final class WorkspaceViewModel {
 
         connections[providerId] = ProviderConnection(baseURLString: trimmedBase, model: trimmedModel)
         persistConnections()
+        providerUsage.removeValue(forKey: providerId)
 
         if activeProviderID == nil || connections[activeProviderID ?? ""] == nil {
             setActiveProvider(providerId)
@@ -424,11 +500,52 @@ final class WorkspaceViewModel {
         KeychainStore.set(nil, account: Self.keychainAccount(for: providerId))
         connections.removeValue(forKey: providerId)
         fetchedModels.removeValue(forKey: providerId)
+        providerUsage.removeValue(forKey: providerId)
         if activeProviderID == providerId {
             activeProviderID = connectedProviders.first?.id
             UserDefaults.standard.set(activeProviderID, forKey: Self.activeProviderKey)
         }
         persistConnections()
+    }
+
+    func refreshUsage(for info: ProviderInfo, force: Bool = false) async {
+        guard connections[info.id] != nil else { return }
+        guard info.id == "openrouter" else { return }
+        guard force || providerUsage[info.id] == nil else { return }
+        guard let key = KeychainStore.get(account: Self.keychainAccount(for: info.id)), !key.isEmpty,
+              let url = URL(string: "https://openrouter.ai/api/v1/auth/key")
+        else { return }
+        do {
+            var request = URLRequest(url: url)
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return }
+            let decoded = try JSONDecoder().decode(OpenRouterKeyResponse.self, from: data)
+            guard let usage = decoded.data.usage else { return }
+            providerUsage[info.id] = ProviderUsage(
+                usage: usage,
+                limit: decoded.data.limit,
+                isFreeTier: decoded.data.isFreeTier ?? false
+            )
+        } catch {
+            // Нет доступа к статистике — просто не показываем остаток.
+        }
+    }
+
+    private struct OpenRouterKeyResponse: Decodable {
+        struct Payload: Decodable {
+            let usage: Double?
+            let limit: Double?
+            let isFreeTier: Bool?
+
+            enum CodingKeys: String, CodingKey {
+                case usage
+                case limit
+                case isFreeTier = "is_free_tier"
+            }
+        }
+
+        let data: Payload
     }
 
     func setActiveProvider(_ id: String?) {

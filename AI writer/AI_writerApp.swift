@@ -14,6 +14,18 @@ struct AI_writerApp: App {
                 .environment(workspace)
                 .frame(minWidth: 1080, minHeight: 700)
         }
+        .commands {
+            CommandGroup(replacing: .undoRedo) {
+                Button("Отменить") {
+                    NSApp.sendAction(Selector(("undo:")), to: nil, from: nil)
+                }
+                .keyboardShortcut("z", modifiers: .command)
+                Button("Повторить") {
+                    NSApp.sendAction(Selector(("redo:")), to: nil, from: nil)
+                }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+            }
+        }
         Settings {
             SettingsView()
                 .environment(workspace)

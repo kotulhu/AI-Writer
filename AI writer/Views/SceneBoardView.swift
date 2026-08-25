@@ -91,6 +91,15 @@ struct SceneCardView: View {
                         Task { await workspace.duplicateScene(scene.id) }
                     }
                     Divider()
+                    Button("Объединить со следующей") {
+                        Task { await workspace.joinWithNext(scene.id) }
+                    }
+                    .disabled(isLast)
+                    Button("Объединить с предыдущей") {
+                        Task { await workspace.joinWithPrevious(scene.id) }
+                    }
+                    .disabled(isFirst)
+                    Divider()
                     Button("Удалить сцену", role: .destructive) {
                         Task { await workspace.deleteScene(scene.id) }
                     }
@@ -163,6 +172,15 @@ struct SceneCardView: View {
             Button("Дублировать") {
                 Task { await workspace.duplicateScene(scene.id) }
             }
+            Divider()
+            Button("Объединить со следующей") {
+                Task { await workspace.joinWithNext(scene.id) }
+            }
+            .disabled(isLast)
+            Button("Объединить с предыдущей") {
+                Task { await workspace.joinWithPrevious(scene.id) }
+            }
+            .disabled(isFirst)
             Divider()
             Button("Удалить сцену", role: .destructive) {
                 Task { await workspace.deleteScene(scene.id) }
