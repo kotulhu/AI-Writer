@@ -45,6 +45,11 @@ private struct ProviderCard: View {
     @State private var baseURL = ""
     @State private var model = ""
     @State private var apiKeyInput = ""
+    @State private var connectionTestStatus: ConnectionTestStatus = .idle
+
+    private enum ConnectionTestStatus: Equatable {
+        case idle, running, success, error(String)
+    }
 
     private var isConnected: Bool {
         workspace.connections[info.id] != nil
@@ -105,6 +110,7 @@ private struct ProviderCard: View {
         .onChange(of: isExpanded) { _, newValue in
             guard newValue else { return }
             loadSnapshot()
+            connectionTestStatus = .idle
             Task { await workspace.fetchModelsIfNeeded(for: info) }
         }
         .task(id: isExpanded) {
@@ -238,7 +244,44 @@ private struct ProviderCard: View {
                 }
             }
             .font(.callout)
+
+            if isConnected {
+                HStack(spacing: 8) {
+                    Button("Проверить подключение") {
+                        Task { await runConnectionTest() }
+                    }
+                    .controlSize(.small)
+                    .disabled(connectionTestStatus == .running)
+                    switch connectionTestStatus {
+                    case .idle:
+                        EmptyView()
+                    case .running:
+                        ProgressView()
+                            .controlSize(.small)
+                    case .success:
+                        Label("Подключено ✅", systemImage: "checkmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    case .error(let message):
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("Не подключено ❌", systemImage: "xmark.circle")
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                            Text(message)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    private func runConnectionTest() async {
+        connectionTestStatus = .running
+        let result = await workspace.testProvider(info)
+        connectionTestStatus = result == nil ? .success : .error(result!)
     }
 
     @ViewBuilder

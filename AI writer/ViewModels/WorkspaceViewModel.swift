@@ -593,6 +593,45 @@ final class WorkspaceViewModel {
         }
     }
 
+    // MARK: - Чат и проверка провайдера
+
+    /// Единая точка доступа к активному ИИ-клиенту (чат, переформулировка, синонимы).
+    func chatClient() -> TextGenerating? {
+        makeClient()
+    }
+
+    /// Добавляет текст в конец текущей сцены (кнопка «Добавить в текст» в чате).
+    func appendToSelectedScene(_ text: String) {
+        guard let id = selectedSceneID else { return }
+        mutate(id) { scene in
+            scene.content = scene.content.isEmpty ? text : scene.content + "\n\n" + text
+        }
+    }
+
+    /// Тестовый запрос к провайдеру. Возвращает nil при успехе или текст ошибки.
+    func testProvider(_ info: ProviderInfo) async -> String? {
+        guard let connection = connections[info.id],
+              let url = URL(string: connection.baseURLString), url.scheme != nil
+        else {
+            return "Провайдер не подключён"
+        }
+        guard !connection.model.isEmpty else {
+            return "Не выбрана модель"
+        }
+        let config = ClientConfig(
+            provider: info,
+            baseURL: url,
+            apiKey: KeychainStore.get(account: Self.keychainAccount(for: info.id)),
+            model: connection.model
+        )
+        do {
+            try await AIClientFactory.client(for: config).testConnection()
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     private func loadConnections() {
         if let data = UserDefaults.standard.data(forKey: Self.connectionsKey),
            let decoded = try? JSONDecoder().decode([String: ProviderConnection].self, from: data) {

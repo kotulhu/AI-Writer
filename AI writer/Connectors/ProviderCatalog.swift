@@ -101,9 +101,10 @@ struct ProviderInfo: Identifiable, Hashable {
         usesOAuth: true,
         keysPageURL: "https://openrouter.ai/keys",
         fallbackModels: [
+            "openai/gpt-4o-mini:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
             "deepseek/deepseek-chat-v3.1",
             "google/gemini-2.5-flash",
-            "openai/gpt-4o-mini",
             "anthropic/claude-sonnet-4.5",
         ],
         allowsCustomBaseURL: false,

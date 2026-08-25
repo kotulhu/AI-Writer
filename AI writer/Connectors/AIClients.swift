@@ -1,7 +1,35 @@
 import Foundation
 
+/// Одна реплика истории чата без учёта системной инструкции.
+struct ChatTurn: Sendable, Equatable {
+    let isFromUser: Bool
+    let text: String
+}
+
 protocol TextGenerating: Sendable {
     func generate(system: String, user: String, temperature: Double) async throws -> String
+
+    /// Диалоговый режим: система + история реплик.
+    func generate(system: String, turns: [ChatTurn], temperature: Double) async throws -> String
+
+    /// Минимальная проверка доступности провайдера.
+    func testConnection() async throws
+}
+
+extension TextGenerating {
+    /// Запасная реализация для клиентов без нативного мульти-тёрна:
+    /// история склеивается в один пользовательский запрос.
+    func generate(system: String, turns: [ChatTurn], temperature: Double) async throws -> String {
+        let transcript = turns
+            .map { "\($0.isFromUser ? "Автор" : "Помощник"): \($0.text)" }
+            .joined(separator: "\n\n")
+        return try await generate(system: system, user: transcript, temperature: temperature)
+    }
+
+    /// Дефолтная проверка — минимальный запрос к модели.
+    func testConnection() async throws {
+        _ = try await generate(system: "", user: "ping", temperature: 0)
+    }
 }
 
 struct ClientConfig {
@@ -48,20 +76,25 @@ struct ChatCompletionsClient: TextGenerating {
     }
 
     func generate(system: String, user: String, temperature: Double) async throws -> String {
+        try await generate(
+            system: system,
+            turns: [ChatTurn(isFromUser: true, text: user)],
+            temperature: temperature
+        )
+    }
+
+    func generate(system: String, turns: [ChatTurn], temperature: Double) async throws -> String {
         var request = URLRequest(url: config.baseURL.appending(path: "chat/completions"))
         request.httpMethod = "POST"
         request.timeoutInterval = 180
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         Self.applyAuth(to: &request, config: config)
+        var payload: [Message] = [Message(role: "system", content: system)]
+        payload.append(contentsOf: turns.map {
+            Message(role: $0.isFromUser ? "user" : "assistant", content: $0.text)
+        })
         request.httpBody = try JSONEncoder().encode(
-            Request(
-                model: config.model,
-                messages: [
-                    Message(role: "system", content: system),
-                    Message(role: "user", content: user),
-                ],
-                temperature: temperature
-            )
+            Request(model: config.model, messages: payload, temperature: temperature)
         )
 
         let (data, response) = try await session.data(for: request)
@@ -124,7 +157,7 @@ struct AnthropicClient: TextGenerating {
 
     private struct Message: Encodable {
         let role: String
-        let content: String
+        var content: String
     }
 
     private struct Request: Encodable {
@@ -145,19 +178,44 @@ struct AnthropicClient: TextGenerating {
     }
 
     func generate(system: String, user: String, temperature: Double) async throws -> String {
+        try await generate(
+            system: system,
+            turns: [ChatTurn(isFromUser: true, text: user)],
+            temperature: temperature
+        )
+    }
+
+    func generate(system: String, turns: [ChatTurn], temperature: Double) async throws -> String {
         var request = URLRequest(url: config.baseURL.appending(path: "messages"))
         request.httpMethod = "POST"
         request.timeoutInterval = 180
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         ChatCompletionsClient.applyAuth(to: &request, config: config)
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        // Anthropic требует чередования ролей — склеиваем подряд идущие реплики одного автора.
+        var merged: [Message] = []
+        for turn in turns {
+            let role = turn.isFromUser ? "user" : "assistant"
+            let text = turn.text
+            if let lastIndex = merged.indices.last, merged[lastIndex].role == role {
+                merged[lastIndex].content += "\n\n" + text
+            } else {
+                merged.append(Message(role: role, content: text))
+            }
+        }
+        if merged.last?.role == "assistant" {
+            merged.removeLast()
+        }
+        guard !merged.isEmpty else {
+            throw ChatCompletionsClient.AIError.emptyCompletion
+        }
         request.httpBody = try JSONEncoder().encode(
             Request(
                 model: config.model,
                 max_tokens: 2048,
                 temperature: temperature,
                 system: system,
-                messages: [Message(role: "user", content: user)]
+                messages: merged
             )
         )
 
