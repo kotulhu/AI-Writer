@@ -17,8 +17,7 @@ struct BlockEditorView: View {
     }
 
     private var title: String {
-        let firstLine = block.content.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
-        return firstLine.isEmpty ? "Блок" : firstLine
+        block.title.isEmpty ? "Блок" : block.title
     }
 
     private var toolbar: some View {

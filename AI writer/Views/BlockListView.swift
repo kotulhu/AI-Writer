@@ -25,6 +25,10 @@ struct BlockListView: View {
         )
     }
 
+    @State private var isRenaming = false
+    @State private var renameTitle = ""
+    @State private var blockToRename: Block?
+
     var body: some View {
         Group {
             if let manuscript = store.selectedManuscript {
@@ -32,7 +36,11 @@ struct BlockListView: View {
                     ForEach(blocks) { block in
                         BlockRow(block: block)
                             .tag(block.id)
+                            .onTapGesture(count: 2) {
+                                beginRename(block)
+                            }
                             .contextMenu {
+                                Button("Переименовать…") { beginRename(block) }
                                 Button("Дублировать") { store.duplicateBlock(block, context: context) }
                                 Button("Объединить со следующим") { store.mergeBlockWithNext(block, context: context) }
                                 Divider()
@@ -58,12 +66,27 @@ struct BlockListView: View {
             }
         }
         .frame(minWidth: 140)
+        .alert("Переименовать блок", isPresented: $isRenaming) {
+            TextField("Название", text: $renameTitle)
+            Button("Переименовать") {
+                if let block = blockToRename {
+                    store.renameBlock(block, title: renameTitle, context: context)
+                }
+            }
+            Button("Отмена", role: .cancel) {}
+        }
         .onAppear {
             ensureSelection()
         }
         .onChange(of: blocks.count) {
             ensureSelection()
         }
+    }
+
+    private func beginRename(_ block: Block) {
+        renameTitle = block.title
+        blockToRename = block
+        isRenaming = true
     }
 
     private func ensureSelection() {
@@ -79,28 +102,10 @@ private struct BlockRow: View {
     let block: Block
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.body)
-                .lineLimit(1)
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-        .padding(.vertical, 2)
-    }
-
-    private var title: String {
-        let firstLine = block.content.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
-        return firstLine.isEmpty ? "Пустой блок" : firstLine
-    }
-
-    private var subtitle: String {
-        let cleaned = block.content
-            .replacingOccurrences(of: "*", with: "")
-            .replacingOccurrences(of: "`", with: "")
-            .replacingOccurrences(of: "\n", with: " ")
-        return cleaned.isEmpty ? "Без содержимого" : cleaned
+        Text(block.title.isEmpty ? "Без названия" : block.title)
+            .font(.body)
+            .lineLimit(1)
+            .foregroundStyle(block.title.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+            .padding(.vertical, 2)
     }
 }

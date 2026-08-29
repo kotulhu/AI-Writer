@@ -42,7 +42,7 @@ final class ManuscriptStore {
     func createManuscript(title: String, context: ModelContext) -> Manuscript {
         let manuscript = Manuscript(title: title)
         context.insert(manuscript)
-        let firstBlock = Block(order: 0, manuscript: manuscript)
+        let firstBlock = Block(title: newBlockTitle(for: manuscript), order: 0, manuscript: manuscript)
         context.insert(firstBlock)
         selectedManuscript = manuscript
         selectedBlock = firstBlock
@@ -67,6 +67,13 @@ final class ManuscriptStore {
         try? context.save()
     }
 
+    // MARK: - Block helpers
+
+    private func newBlockTitle(for manuscript: Manuscript) -> String {
+        let count = manuscript.orderedBlocks.count
+        return "Блок \(count + 1)"
+    }
+
     // MARK: - Block CRUD
 
     /// Creates a block after `after` (or at the end when `after == nil`), and selects it.
@@ -84,12 +91,21 @@ final class ManuscriptStore {
         } else {
             newOrder = (blocks.last?.order ?? 0) + 1
         }
-        let block = Block(order: newOrder, manuscript: manuscript)
+        let block = Block(title: newBlockTitle(for: manuscript), order: newOrder, manuscript: manuscript)
         context.insert(block)
         manuscript.updatedAt = .now
         try? context.save()
         selectedBlock = block
         return block
+    }
+
+    func renameBlock(_ block: Block, title: String, context: ModelContext) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        block.title = trimmed
+        block.updatedAt = .now
+        block.manuscript?.updatedAt = .now
+        try? context.save()
     }
 
     func deleteBlock(_ block: Block, context: ModelContext) {
@@ -110,7 +126,7 @@ final class ManuscriptStore {
         let blocks = manuscript.orderedBlocks
         guard let idx = blocks.firstIndex(where: { $0.id == block.id }) else { return }
         let nextOrder = idx + 1 < blocks.count ? blocks[idx + 1].order : block.order + 1
-        let duplicate = Block(content: block.content, order: (block.order + nextOrder) / 2.0, manuscript: manuscript)
+        let duplicate = Block(title: block.title, content: block.content, order: (block.order + nextOrder) / 2.0, manuscript: manuscript)
         context.insert(duplicate)
         manuscript.updatedAt = .now
         try? context.save()
@@ -145,7 +161,7 @@ final class ManuscriptStore {
 
         block.content = head
         block.updatedAt = .now
-        let newBlock = Block(content: tail, order: newOrder, manuscript: manuscript)
+        let newBlock = Block(title: newBlockTitle(for: manuscript), content: tail, order: newOrder, manuscript: manuscript)
         context.insert(newBlock)
         manuscript.updatedAt = .now
         try? context.save()

@@ -274,6 +274,15 @@ final class EditorScrollView: NSScrollView {
         }
         super.mouseDown(with: event)
     }
+
+    override func layout() {
+        super.layout()
+        guard let tv = documentView as? BlockTextViewEditor else { return }
+        let targetWidth = max(contentView.bounds.width, 10)
+        if abs(tv.frame.width - targetWidth) > 0.5 {
+            tv.frame.size.width = targetWidth
+        }
+    }
 }
 
 // MARK: - SwiftUI representable
