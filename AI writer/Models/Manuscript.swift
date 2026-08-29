@@ -1,19 +1,25 @@
 import Foundation
-import GRDB
+import SwiftData
 
-struct Manuscript: Codable, Identifiable, Hashable, FetchableRecord, MutablePersistableRecord {
+@Model
+final class Manuscript {
     var id: UUID
     var title: String
     var createdAt: Date
     var updatedAt: Date
 
-    static let databaseTableName = "manuscripts"
+    @Relationship(deleteRule: .cascade, inverse: \Block.manuscript)
+    var blocks: [Block]
 
-    static func create(title: String, now: Date = Date()) -> Manuscript {
-        Manuscript(id: UUID(), title: title, createdAt: now, updatedAt: now)
+    init(title: String, now: Date = .now) {
+        self.id = UUID()
+        self.title = title
+        self.createdAt = now
+        self.updatedAt = now
+        self.blocks = []
     }
 
-    mutating func touch(now: Date = Date()) {
-        updatedAt = now
+    var orderedBlocks: [Block] {
+        blocks.sorted { $0.order < $1.order }
     }
 }

@@ -1,71 +1,51 @@
+import SwiftData
 import SwiftUI
 
 struct ContentView: View {
-    @Environment(WorkspaceViewModel.self) private var workspace
-    @Environment(ChatViewModel.self) private var chat
-    @State private var errorIsPresented = false
+    @Environment(\.modelContext) private var context
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var store = ManuscriptStore()
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView()
-                .navigationSplitViewColumnWidth(min: 200, ideal: 240)
-        } detail: {
-            VStack(spacing: 0) {
-                if workspace.selectedManuscriptID == nil {
-                    ContentUnavailableView(
-                        "Рукопись не выбрана",
-                        systemImage: "book.closed",
-                        description: Text("Создайте рукопись в боковой панели")
-                    )
+        HSplitView {
+            ManuscriptListView(store: store)
+                .frame(minWidth: 180, idealWidth: 230)
+
+            BlockListView(store: store)
+                .frame(minWidth: 150, idealWidth: 190)
+
+            Group {
+                if let block = store.selectedBlock {
+                    BlockEditorView(store: store, block: block)
                 } else {
-                    SceneBoardView()
-                }
-                if chat.isPanelVisible {
-                    Divider()
-                    ChatPanelView()
-                        .frame(height: 280)
-                        .transition(.move(edge: .bottom))
+                    ContentUnavailableView(
+                        "Нет выбранного блока",
+                        systemImage: "square.and.pencil",
+                        description: Text("Создайте книгу и блок, чтобы начать писать.")
+                    )
                 }
             }
-            .animation(.easeInOut(duration: 0.22), value: chat.isPanelVisible)
-            .toolbar {
-                ToolbarItemGroup(placement: .primaryAction) {
-                    Button {
-                        chat.togglePanel()
-                    } label: {
-                        Label(
-                            "Помощник",
-                            systemImage: chat.isPanelVisible ? "message.fill" : "message"
-                        )
-                    }
-                    .keyboardShortcut("k", modifiers: [.command, .shift])
-                    AIAvailabilityIndicator()
-                }
+            .frame(minWidth: 420)
+        }
+        .frame(minWidth: 820, minHeight: 480)
+        .onChange(of: store.selectedManuscript?.persistentModelID) {
+            guard let manuscript = store.selectedManuscript else {
+                store.selectedBlock = nil
+                EditorDiag.log("ContentView.onChange manuscript -> nil (block cleared)")
+                return
+            }
+            let current = store.selectedBlock
+            if current == nil || current?.manuscript?.persistentModelID != manuscript.persistentModelID {
+                store.selectedBlock = manuscript.orderedBlocks.first
+                EditorDiag.log("ContentView.onChange manuscript \(manuscript.title) -> block #\(manuscript.orderedBlocks.count == 0 ? -1 : 1)")
+            } else {
+                EditorDiag.log("ContentView.onChange manuscript \(manuscript.title) kept block")
             }
         }
-        .sheet(
-            isPresented: Binding(
-                get: { workspace.mergeCandidate != nil },
-                set: { if !$0 { workspace.mergeCandidate = nil } }
-            )
-        ) {
-            if let candidate = workspace.mergeCandidate {
-                MergeSheetView(candidate: candidate)
-                    .interactiveDismissDisabled()
+        .onChange(of: scenePhase) {
+            if scenePhase != .active {
+                BlockTextViewCoordinator.current?.flush(saveNow: true)
             }
-        }
-        .onChange(of: workspace.errorMessage) { _, message in
-            errorIsPresented = message != nil
-        }
-        .alert("Ошибка", isPresented: $errorIsPresented) {
-            Button("OK", role: .cancel) {
-                workspace.errorMessage = nil
-            }
-        } message: {
-            Text(workspace.errorMessage ?? "")
-        }
-        .task {
-            await workspace.start()
         }
     }
 }

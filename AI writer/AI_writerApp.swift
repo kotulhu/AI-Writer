@@ -1,39 +1,29 @@
+import SwiftData
 import SwiftUI
 
 @main
 struct AI_writerApp: App {
-    @State private var workspace: WorkspaceViewModel
-    @State private var chat: ChatViewModel
+    let container: ModelContainer
 
     init() {
-        let ws = WorkspaceViewModel(database: DatabaseService.live())
-        workspace = ws
-        chat = ChatViewModel(workspace: ws)
+        EditorDiag.log("App.init start")
+        do {
+            container = try ModelContainer(for: Manuscript.self, Block.self)
+            EditorDiag.log("App.init container OK")
+        } catch {
+            EditorDiag.log("App.init fatal: \(error)")
+            fatalError("Не удалось создать хранилище данных: \(error)")
+        }
     }
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("AI Writer") {
             ContentView()
-                .environment(workspace)
-                .environment(chat)
-                .frame(minWidth: 1080, minHeight: 700)
-        }
-        .commands {
-            CommandGroup(replacing: .undoRedo) {
-                Button("Отменить") {
-                    NSApp.sendAction(Selector(("undo:")), to: nil, from: nil)
+                .onAppear {
+                    EditorDiag.log("ContentView.onAppear")
                 }
-                .keyboardShortcut("z", modifiers: .command)
-                Button("Повторить") {
-                    NSApp.sendAction(Selector(("redo:")), to: nil, from: nil)
-                }
-                .keyboardShortcut("z", modifiers: [.command, .shift])
-            }
         }
-        Settings {
-            SettingsView()
-                .environment(workspace)
-                .environment(chat)
-        }
+        .modelContainer(container)
+        .defaultSize(width: 1080, height: 680)
     }
 }

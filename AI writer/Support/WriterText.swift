@@ -1,618 +1,370 @@
 import AppKit
 
-enum WriterFormatAction {
-    case bold
-    case italic
-    case strike
-    case code
-    case heading(Int)
-    case bullet
-    case ordered
-    case quote
-    case rule
-}
-
+/// Converts between Markdown (the stored source of truth) and the rich text
+/// shown in the block editor.
 enum WriterText {
-    static let bodyFont: NSFont = {
-        let descriptor = NSFont.systemFont(ofSize: 15).fontDescriptor.withDesign(.serif)
-        return descriptor.flatMap { NSFont(descriptor: $0, size: 15) } ?? .systemFont(ofSize: 15)
-    }()
+    static let bodySize: CGFloat = 15
+    static let quoteKey = NSAttributedString.Key("AIWriter.quote")
 
-    static let codeFont = NSFont(name: "Menlo", size: 13)
-        ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    // MARK: - Fonts
 
-    static func headingFont(_ level: Int) -> NSFont {
-        let size: CGFloat = [1: 24, 2: 20, 3: 17][level] ?? 15
-        let weight: NSFont.Weight = level == 3 ? .semibold : .bold
-        let descriptor = NSFont.systemFont(ofSize: size, weight: weight).fontDescriptor.withDesign(.serif)
-        return descriptor.flatMap { NSFont(descriptor: $0, size: size) } ?? .boldSystemFont(ofSize: size)
+    static func bodyFont() -> NSFont {
+        makeFont(size: bodySize, bold: false, italic: false)
     }
 
-    private static func fontTraitMask(_ symbolicTraits: NSFontDescriptor.SymbolicTraits) -> NSFontTraitMask {
-        var mask: NSFontTraitMask = []
-        if symbolicTraits.contains(.bold) { mask.insert(.boldFontMask) }
-        if symbolicTraits.contains(.italic) { mask.insert(.italicFontMask) }
-        return mask
+    static func headingFont(level: Int) -> NSFont {
+        makeFont(size: headingSize(level: level), bold: true, italic: false)
     }
 
-    private static let headingKey = NSAttributedString.Key("writerHeading")
-    private static let quoteKey = NSAttributedString.Key("writerQuote")
-    private static let ruleKey = NSAttributedString.Key("writerRule")
+    static func codeFont(size: CGFloat) -> NSFont {
+        NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    }
 
-    private static let inlineRegex = try! NSRegularExpression(
-        pattern: """
-        \\*\\*\\*(.+?)\\*\\*\\*|\\*\\*(.+?)\\*\\*|(?<![*])\\*([^*\\n]+?)\\*(?!\\*)|~~(.+?)~~|`([^`\\n]+)`
-        """,
-        options: []
-    )
-
-    // MARK: - Markdown → Attributed
-
-    static func attributed(from markdown: String) -> NSAttributedString {
-        let output = NSMutableAttributedString()
-        let lines = markdown.components(separatedBy: "\n")
-        for (index, line) in lines.enumerated() {
-            output.append(paragraph(fromLine: line))
-            if index < lines.count - 1 {
-                output.append(NSAttributedString(string: "\n", attributes: baseAttributes()))
-            }
+    static func headingSize(level: Int) -> CGFloat {
+        switch level {
+        case 1: return 28
+        case 2: return 23
+        case 3: return 19
+        default: return 16
         }
-        return output
     }
 
-    private static func baseAttributes() -> [NSAttributedString.Key: Any] {
+    static func makeFont(size: CGFloat, bold: Bool, italic: Bool) -> NSFont {
+        var traits: NSFontDescriptor.SymbolicTraits = []
+        if bold { traits.insert(.bold) }
+        if italic { traits.insert(.italic) }
+        let descriptor = NSFont.systemFont(ofSize: size).fontDescriptor.withSymbolicTraits(traits)
+        if let font = NSFont(descriptor: descriptor, size: size) {
+            return font
+        }
+        return NSFont.systemFont(ofSize: size)
+    }
+
+    static func headingLevel(of font: NSFont) -> Int {
+        guard font.fontDescriptor.symbolicTraits.contains(.bold) else { return 0 }
+        switch Double(font.pointSize) {
+        case 27...29: return 1
+        case 22...24: return 2
+        case 18...20: return 3
+        case 15...17: return 4
+        default: return 0
+        }
+    }
+
+    static func bodyAttributes() -> [NSAttributedString.Key: Any] {
         [
-            .font: bodyFont,
-            .paragraphStyle: plainParagraphStyle(),
-            .foregroundColor: NSColor.textColor,
+            .font: bodyFont(),
+            .paragraphStyle: paragraphStyle(indent: 0)
         ]
     }
 
-    private static func plainParagraphStyle() -> NSParagraphStyle {
+    static func paragraphStyle(indent: CGFloat) -> NSMutableParagraphStyle {
         let style = NSMutableParagraphStyle()
-        style.paragraphSpacing = 6
-        style.lineSpacing = 2
-        return style
-    }
-
-    private static func headingParagraphStyle() -> NSParagraphStyle {
-        let style = NSMutableParagraphStyle()
-        style.paragraphSpacingBefore = 12
-        style.paragraphSpacing = 6
-        return style
-    }
-
-    private static func quoteParagraphStyle() -> NSParagraphStyle {
-        let style = NSMutableParagraphStyle()
-        style.headIndent = 16
-        style.paragraphSpacing = 6
-        return style
-    }
-
-    private static func listParagraphStyle(markerFormat: NSTextList.MarkerFormat) -> NSParagraphStyle {
-        let style = NSMutableParagraphStyle()
-        let list = NSTextList(markerFormat: markerFormat, options: 0)
-        style.textLists = [list]
-        style.headIndent = 22
         style.paragraphSpacing = 4
+        if indent > 0 {
+            style.headIndent = indent
+            style.firstLineHeadIndent = indent
+        }
         return style
     }
 
-    private static func ruleParagraphStyle() -> NSParagraphStyle {
+    static func headingParagraphStyle() -> NSMutableParagraphStyle {
         let style = NSMutableParagraphStyle()
-        style.alignment = .center
-        style.paragraphSpacingBefore = 14
-        style.paragraphSpacing = 14
+        style.paragraphSpacing = 6
+        style.paragraphSpacingBefore = 6
         return style
     }
 
-    private enum LineKind {
-        case normal
-        case rule
-        case heading(Int)
-        case quote
-        case bullet
-        case ordered
+    // MARK: - Render (Markdown -> NSAttributedString)
+
+    static func render(markdown: String) -> NSAttributedString {
+        guard !markdown.isEmpty else { return NSAttributedString() }
+        let result = NSMutableAttributedString()
+        let lines = markdown.components(separatedBy: "\n")
+
+        for (i, rawLine) in lines.enumerated() {
+            var line = rawLine
+            let style = detectLineStyle(&line)
+
+            switch style {
+            case .blank:
+                if i < lines.count - 1 {
+                    result.append(NSAttributedString(string: "\n", attributes: [.font: bodyFont()]))
+                }
+            case let .heading(level), let .paragraph(level):
+                let size = level > 0 ? headingSize(level: level) : bodySize
+                let lineAttributed = parseInline(line, size: size, baseBold: level > 0, baseItalic: false)
+                if lineAttributed.length > 0 {
+                    lineAttributed.addAttribute(
+                        .paragraphStyle,
+                        value: level > 0 ? headingParagraphStyle() : paragraphStyle(indent: 0),
+                        range: NSRange(location: 0, length: lineAttributed.length)
+                    )
+                }
+                result.append(lineAttributed)
+                if i < lines.count - 1 {
+                    result.append(NSAttributedString(string: "\n", attributes: [.font: bodyFont()]))
+                }
+            case .quote:
+                let lineAttributed = parseInline(line, size: bodySize, baseBold: false, baseItalic: false)
+                if lineAttributed.length > 0 {
+                    lineAttributed.addAttribute(
+                        .paragraphStyle,
+                        value: paragraphStyle(indent: 20),
+                        range: NSRange(location: 0, length: lineAttributed.length)
+                    )
+                    lineAttributed.addAttribute(quoteKey, value: true, range: NSRange(location: 0, length: lineAttributed.length))
+                }
+                result.append(lineAttributed)
+                if i < lines.count - 1 {
+                    result.append(NSAttributedString(string: "\n", attributes: [.font: bodyFont()]))
+                }
+            }
+        }
+
+        return result
     }
 
-    private static func classify(_ line: String) -> (kind: LineKind, contentStart: String.Index) {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        if trimmed == "***" || trimmed == "---" || trimmed == "___" {
-            return (.rule, line.startIndex)
+    private enum LineStyle {
+        case blank
+        case heading(Int)
+        case paragraph(Int)
+        case quote
+    }
+
+    private static func detectLineStyle(_ line: inout String) -> LineStyle {
+        if line.isEmpty { return .blank }
+        if line.hasPrefix("##### ") || line.hasPrefix("###### ") {
+            return .paragraph(0)
+        }
+        if line.hasPrefix("#### ") {
+            line.removeFirst(5)
+            return .heading(4)
         }
         if line.hasPrefix("### ") {
-            return (.heading(3), line.index(line.startIndex, offsetBy: 4))
+            line.removeFirst(4)
+            return .heading(3)
         }
         if line.hasPrefix("## ") {
-            return (.heading(2), line.index(line.startIndex, offsetBy: 3))
+            line.removeFirst(3)
+            return .heading(2)
         }
         if line.hasPrefix("# ") {
-            return (.heading(1), line.index(line.startIndex, offsetBy: 2))
+            line.removeFirst(2)
+            return .heading(1)
         }
-        if line.hasPrefix(">") {
-            var start = line.index(after: line.startIndex)
-            if start < line.endIndex, line[start] == " " {
-                start = line.index(after: start)
-            }
-            return (.quote, start)
+        if line.hasPrefix("> ") {
+            line.removeFirst(2)
+            return .quote
         }
-        if line.hasPrefix("- ") || line.hasPrefix("* ") {
-            return (.bullet, line.index(line.startIndex, offsetBy: 2))
-        }
-        var index = line.startIndex
-        while index < line.endIndex, line[index].isNumber {
-            index = line.index(after: index)
-        }
-        let digitCount = line.distance(from: line.startIndex, to: index)
-        if digitCount > 0, digitCount < 5,
-           index < line.endIndex,
-           line[index] == "." || line[index] == ")",
-           let afterMarker = line.index(index, offsetBy: 1, limitedBy: line.endIndex),
-           afterMarker < line.endIndex,
-           line[afterMarker] == " ",
-           let contentStart = line.index(afterMarker, offsetBy: 1, limitedBy: line.endIndex)
-        {
-            return (.ordered, contentStart)
-        }
-        return (.normal, line.startIndex)
+        return .paragraph(0)
     }
 
-    private static func paragraph(fromLine line: String) -> NSAttributedString {
-        let (kind, contentStart) = classify(line)
-        let body = String(line[contentStart...])
+    // MARK: - Inline parser
 
-        switch kind {
-        case .rule:
-            var attrs = baseAttributes()
-            attrs[.paragraphStyle] = ruleParagraphStyle()
-            attrs[ruleKey] = true
-            attrs[.foregroundColor] = NSColor.secondaryLabelColor
-            return NSAttributedString(string: "⸻", attributes: attrs)
-        case .heading(let level):
-            var attrs = baseAttributes()
-            attrs[.font] = headingFont(level)
-            attrs[.paragraphStyle] = headingParagraphStyle()
-            attrs[headingKey] = level
-            let result = NSMutableAttributedString(string: body, attributes: attrs)
-            decorateInline(result)
-            return result
-        case .quote:
-            var attrs = baseAttributes()
-            attrs[.paragraphStyle] = quoteParagraphStyle()
-            attrs[quoteKey] = true
-            attrs[.foregroundColor] = NSColor.secondaryLabelColor
-            let result = NSMutableAttributedString(string: body, attributes: attrs)
-            decorateInline(result)
-            return result
-        case .bullet:
-            var attrs = baseAttributes()
-            attrs[.paragraphStyle] = listParagraphStyle(markerFormat: .disc)
-            let result = NSMutableAttributedString(string: body, attributes: attrs)
-            decorateInline(result)
-            return result
-        case .ordered:
-            var attrs = baseAttributes()
-            attrs[.paragraphStyle] = listParagraphStyle(markerFormat: .decimal)
-            let result = NSMutableAttributedString(string: body, attributes: attrs)
-            decorateInline(result)
-            return result
-        case .normal:
-            if body.isEmpty {
-                return NSAttributedString(string: "", attributes: baseAttributes())
-            }
-            let result = NSMutableAttributedString(string: body, attributes: baseAttributes())
-            decorateInline(result)
-            return result
+    private static func parseInline(
+        _ text: String,
+        size: CGFloat,
+        baseBold: Bool,
+        baseItalic: Bool
+    ) -> NSMutableAttributedString {
+        let out = NSMutableAttributedString()
+        let ns = text as NSString
+        let n = ns.length
+        var i = 0
+        var plainStart = 0
+
+        func flushPlain(_ end: Int) {
+            guard end > plainStart else { return }
+            let segment = ns.substring(with: NSRange(location: plainStart, length: end - plainStart))
+            out.append(NSAttributedString(string: segment, attributes: [
+                .font: makeFont(size: size, bold: baseBold, italic: baseItalic)
+            ]))
         }
-    }
 
-    private static func decorateInline(_ target: NSMutableAttributedString) {
-        let source = target.copy() as! NSAttributedString
-        target.mutableString.setString("")
-        let nsSource = source.string as NSString
-        let matches = inlineRegex.matches(
-            in: source.string,
-            range: NSRange(location: 0, length: nsSource.length)
-        )
-        var cursor = 0
-        for match in matches {
-            guard match.range.location >= cursor else { continue }
-            appendRange(of: source, into: target, range: NSRange(location: cursor, length: match.range.location - cursor))
-            if let group = [1, 2, 3, 4, 5].first(where: { match.range(at: $0).location != NSNotFound }) {
-                let styled = NSMutableAttributedString(attributedString: source.attributedSubstring(from: match.range(at: group)))
-                applyInlineStyle(group, to: styled)
-                target.append(styled)
-            }
-            cursor = match.range.upperBound
-        }
-        appendRange(of: source, into: target, range: NSRange(location: cursor, length: nsSource.length - cursor))
-    }
+        while i < n {
+            let c = ns.character(at: i)
 
-    private static func appendRange(of source: NSAttributedString, into target: NSMutableAttributedString, range: NSRange) {
-        guard range.length > 0 else { return }
-        target.append(source.attributedSubstring(from: range))
-    }
-
-    private static func applyInlineStyle(_ group: Int, to styled: NSMutableAttributedString) {
-        let full = NSRange(location: 0, length: (styled.string as NSString).length)
-        switch group {
-        case 1:
-            addTrait(.bold, to: styled, range: full)
-            addTrait(.italic, to: styled, range: full)
-        case 2:
-            addTrait(.bold, to: styled, range: full)
-        case 3:
-            addTrait(.italic, to: styled, range: full)
-        case 4:
-            styled.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: full)
-        case 5:
-            styled.addAttribute(.font, value: codeFont, range: full)
-            styled.addAttribute(.backgroundColor, value: NSColor.quaternarySystemFill, range: full)
-        default:
-            break
-        }
-    }
-
-    private static func addTrait(_ trait: NSFontDescriptor.SymbolicTraits, to styled: NSMutableAttributedString, range: NSRange) {
-        let manager = NSFontManager.shared
-        styled.enumerateAttribute(.font, in: range) { value, subRange, _ in
-            guard let font = value as? NSFont else { return }
-            let converted = manager.convert(font, toHaveTrait: fontTraitMask(trait))
-            styled.addAttribute(.font, value: converted, range: subRange)
-        }
-    }
-
-    // MARK: - Attributed → Markdown
-
-    static func markdown(from attributed: NSAttributedString) -> String {
-        let ns = attributed.string as NSString
-        guard ns.length > 0 else { return "" }
-
-        var lines: [String] = []
-        var orderedRunActive = false
-        var orderedCounter = 0
-        var lineStart = 0
-
-        func flush(through end: Int) {
-            defer { lineStart = end + 1 }
-            guard end >= lineStart else {
-                lines.append("")
-                return
-            }
-            let sampleLocation = min(lineStart, max(ns.length - 1, 0))
-            let attrs = attributed.attributes(at: sampleLocation, effectiveRange: nil)
-            let paragraphStyle = attrs[.paragraphStyle] as? NSParagraphStyle
-
-            if (attrs[ruleKey] as? Bool) == true {
-                lines.append("***")
-                orderedRunActive = false
-                return
-            }
-
-            var prefix = ""
-            var suppressBoldItalic = false
-            if let level = attrs[headingKey] as? Int, (1...3).contains(level) {
-                prefix += String(repeating: "#", count: level) + " "
-                suppressBoldItalic = true
-                orderedRunActive = false
-            } else if (attrs[quoteKey] as? Bool) == true {
-                prefix += "> "
-                suppressBoldItalic = true
-                orderedRunActive = false
-            } else if let list = paragraphStyle?.textLists.first {
-                if isDecimal(list) {
-                    if !orderedRunActive {
-                        orderedCounter = 0
-                        orderedRunActive = true
-                    }
-                    orderedCounter += 1
-                    prefix += "\(orderedCounter). "
-                } else {
-                    prefix += "- "
-                    orderedRunActive = false
+            if i + 1 < n, ns.substring(with: NSRange(location: i, length: 2)) == "**" {
+                if let close = ns.range(of: "**", options: [], range: NSRange(location: i + 2, length: n - i - 2)).location as Int? {
+                    flushPlain(i)
+                    let inner = ns.substring(with: NSRange(location: i + 2, length: close - (i + 2)))
+                    out.append(parseInline(inner, size: size, baseBold: true, baseItalic: baseItalic))
+                    i = close + 2
+                    plainStart = i
+                    continue
                 }
-            } else {
-                orderedRunActive = false
             }
 
-            lines.append(
-                prefix + inlineMarkdown(
-                    in: NSRange(location: lineStart, length: end - lineStart),
-                    of: attributed,
-                    suppressBoldItalic: suppressBoldItalic
-                )
-            )
+            if c == 42 || c == 95 { // * od _
+                let marker = c == 42 ? "*" : "_"
+                if let close = ns.range(of: marker, options: [], range: NSRange(location: i + 1, length: n - i - 1)).location as Int? {
+                    flushPlain(i)
+                    let inner = ns.substring(with: NSRange(location: i + 1, length: close - (i + 1)))
+                    out.append(parseInline(inner, size: size, baseBold: baseBold, baseItalic: true))
+                    i = close + 1
+                    plainStart = i
+                    continue
+                }
+            }
+
+            if i + 1 < n, ns.substring(with: NSRange(location: i, length: 2)) == "~~" {
+                if let close = ns.range(of: "~~", options: [], range: NSRange(location: i + 2, length: n - i - 2)).location as Int? {
+                    flushPlain(i)
+                    let innerString = ns.substring(with: NSRange(location: i + 2, length: close - (i + 2)))
+                    let inner = parseInline(innerString, size: size, baseBold: baseBold, baseItalic: baseItalic)
+                    if inner.length > 0 {
+                        inner.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: NSRange(location: 0, length: inner.length))
+                    }
+                    out.append(inner)
+                    i = close + 2
+                    plainStart = i
+                    continue
+                }
+            }
+
+            if c == 96 { // `
+                if let close = ns.range(of: "`", options: [], range: NSRange(location: i + 1, length: n - i - 1)).location as Int? {
+                    flushPlain(i)
+                    let inner = ns.substring(with: NSRange(location: i + 1, length: close - (i + 1)))
+                    out.append(NSAttributedString(string: inner, attributes: [
+                        .font: codeFont(size: size - 1)
+                    ]))
+                    i = close + 1
+                    plainStart = i
+                    continue
+                }
+            }
+
+            if i + 3 < n, ns.substring(with: NSRange(location: i, length: 3)) == "<u>" {
+                if let close = ns.range(of: "</u>", options: [], range: NSRange(location: i + 3, length: n - i - 3)).location as Int? {
+                    flushPlain(i)
+                    let innerString = ns.substring(with: NSRange(location: i + 3, length: close - (i + 3)))
+                    let inner = parseInline(innerString, size: size, baseBold: baseBold, baseItalic: baseItalic)
+                    if inner.length > 0 {
+                        inner.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: NSRange(location: 0, length: inner.length))
+                    }
+                    out.append(inner)
+                    i = close + 4
+                    plainStart = i
+                    continue
+                }
+            }
+
+            i += 1
         }
 
-        for index in 0..<ns.length where ns.character(at: index) == unichar(10) {
-            flush(through: index)
-        }
-        flush(through: ns.length)
-        return lines.joined(separator: "\n")
+        flushPlain(n)
+        return out
     }
 
-    private static func isDecimal(_ list: NSTextList) -> Bool {
-        if #available(macOS 14.0, *) {
-            return list.markerFormat == .decimal
-        }
-        return String(describing: list.markerFormat).contains("decimal")
-    }
+    // MARK: - Serialize (NSAttributedString -> Markdown)
 
-    private struct RunFlags: Equatable {
-        var bold = false
-        var italic = false
-        var strike = false
-        var code = false
-    }
-
-    private static func inlineMarkdown(
-        in range: NSRange,
-        of attributed: NSAttributedString,
-        suppressBoldItalic: Bool
-    ) -> String {
-        guard range.length > 0 else { return "" }
-        var segments: [(String, RunFlags)] = []
-
-        attributed.enumerateAttributes(in: range) { attrs, subRange, _ in
-            var flags = RunFlags()
-            if let font = attrs[.font] as? NSFont {
-                let traits = font.fontDescriptor.symbolicTraits
-                flags.bold = !suppressBoldItalic && traits.contains(.bold)
-                flags.italic = !suppressBoldItalic && traits.contains(.italic)
-                let family = (font.familyName ?? "").lowercased()
-                flags.code = family.contains("menlo") || family.contains("mono")
-            }
-            if let strike = attrs[.strikethroughStyle] as? Int, strike != 0 {
-                flags.strike = true
-            }
-            let text = attributed.attributedSubstring(from: subRange).string
-            if let last = segments.last, last.1 == flags {
-                segments[segments.count - 1].0 += text
-            } else {
-                segments.append((text, flags))
-            }
-        }
+    static func serialize(_ attributed: NSAttributedString) -> String {
+        let text = attributed.string as NSString
+        guard text.length > 0 else { return "" }
 
         var output = ""
-        for (text, flags) in segments {
-            var piece = text
-            if flags.code { piece = "`\(piece)`" }
-            if flags.strike { piece = "~~\(piece)~~" }
-            switch (flags.bold, flags.italic) {
-            case (true, true): piece = "***\(piece)***"
-            case (true, false): piece = "**\(piece)**"
-            case (false, true): piece = "*\(piece)*"
-            default: break
+        var location = 0
+
+        while location < text.length {
+            let paragraphRange = (text as NSString).paragraphRange(for: NSRange(location: location, length: 0))
+            let range = paragraphRange
+            let raw = text.substring(with: range)
+
+            if raw.hasSuffix("\n") {
+                let trimmed = String(raw.dropLast())
+
+                if trimmed.isEmpty {
+                    output += "\n"
+                } else {
+                    emitParagraph(attributed, text: trimmed, range: NSRange(location: range.location, length: (trimmed as NSString).length), into: &output)
+                    output += "\n"
+                }
+            } else if raw.isEmpty {
+                if attributed.length > 0 {
+                    output += "\n"
+                }
+            } else {
+                emitParagraph(attributed, text: raw, range: NSRange(location: range.location, length: raw.utf16.count), into: &output)
             }
-            output += piece
+
+            let advanced = range.location + range.length
+            if advanced <= location {
+                break
+            }
+            location = advanced
         }
+
         return output
     }
 
-    // MARK: - Formatting operations
-
-    static func apply(_ action: WriterFormatAction, to textView: NSTextView) {
-        guard let storage = textView.textStorage else { return }
-        let length = (textView.string as NSString).length
-        let selected = textView.selectedRanges
-            .compactMap { $0 as? NSValue }
-            .map(\.rangeValue)
-            .filter { $0.location <= length && NSMaxRange($0) <= length }
-
-        textView.undoManager?.beginUndoGrouping()
-        defer { textView.undoManager?.endUndoGrouping() }
-
-        switch action {
-        case .bold: toggleInlineTrait(.bold, ranges: selected, storage: storage, textView: textView)
-        case .italic: toggleInlineTrait(.italic, ranges: selected, storage: storage, textView: textView)
-        case .strike: toggleStrike(ranges: selected, storage: storage, textView: textView)
-        case .code: toggleCode(ranges: selected, storage: storage, textView: textView)
-        case .heading(let level): toggleHeading(level, ranges: selected, storage: storage, textView: textView)
-        case .bullet: toggleList(.disc, ranges: selected, storage: storage, textView: textView)
-        case .ordered: toggleList(.decimal, ranges: selected, storage: storage, textView: textView)
-        case .quote: toggleQuote(ranges: selected, storage: storage, textView: textView)
-        case .rule: insertRule(at: selected.first?.location ?? length, storage: storage, textView: textView)
-        }
-
-        textView.didChangeText()
-        syncTypingAttributes(textView)
-    }
-
-    private static func syncTypingAttributes(_ textView: NSTextView) {
-        let location = min(textView.selectedRange().location, max((textView.string as NSString).length - 1, 0))
-        if location >= 0 {
-            textView.typingAttributes = textView.attributedString().attributes(
-                at: location,
-                effectiveRange: nil
-            )
-        }
-    }
-
-    private static func paragraphRanges(around ranges: [NSRange], in storage: NSTextStorage) -> [NSRange] {
-        let text = storage.string as NSString
-        var collected: [NSRange] = []
-        for range in ranges {
-            var start = range.location
-            while start > 0, text.character(at: start - 1) != unichar(10) { start -= 1 }
-            var end = NSMaxRange(range) - 1
-            while end < text.length - 1, text.character(at: end) != unichar(10) { end += 1 }
-            let paragraph = NSRange(location: start, length: end - start + 1)
-            if !collected.contains(paragraph) {
-                collected.append(paragraph)
-            }
-        }
-        return collected
-    }
-
-    private static func rangeHasTrait(_ trait: NSFontDescriptor.SymbolicTraits, range: NSRange, storage: NSTextStorage) -> Bool {
-        guard range.length > 0 else {
-            if let font = storage.attribute(.font, at: min(range.location, max(storage.length - 1, 0)), effectiveRange: nil) as? NSFont {
-                return font.fontDescriptor.symbolicTraits.contains(trait)
-            }
-            return false
-        }
-        var allHave = true
-        storage.enumerateAttribute(.font, in: range) { value, _, stop in
-            guard let font = value as? NSFont, font.fontDescriptor.symbolicTraits.contains(trait) else {
-                allHave = false
-                stop.pointee = true
-                return
-            }
-        }
-        return allHave
-    }
-
-    private static func toggleInlineTrait(
-        _ trait: NSFontDescriptor.SymbolicTraits,
-        ranges: [NSRange],
-        storage: NSTextStorage,
-        textView: NSTextView
+    private static func emitParagraph(
+        _ attributed: NSAttributedString,
+        text: String,
+        range: NSRange,
+        into output: inout String
     ) {
-        let manager = NSFontManager.shared
-        for range in ranges {
-            let adding = !rangeHasTrait(trait, range: range, storage: storage)
-            let effective = range.length > 0
-                ? range
-                : NSRange(location: min(range.location, max(storage.length - 1, 0)), length: 1)
-            _ = textView.shouldChangeText(in: effective, replacementString: "")
-            storage.enumerateAttribute(.font, in: effective) { value, subRange, _ in
-                guard let font = value as? NSFont else { return }
-                let converted = adding
-                    ? manager.convert(font, toHaveTrait: fontTraitMask(trait))
-                    : manager.convert(font, toNotHaveTrait: fontTraitMask(trait))
-                storage.addAttribute(.font, value: converted, range: subRange)
-            }
-        }
-    }
+        let text = text as NSString
 
-    private static func toggleStrike(ranges: [NSRange], storage: NSTextStorage, textView: NSTextView) {
-        for range in ranges {
-            let probe = range.length > 0 ? range : NSRange(location: min(range.location, max(storage.length - 1, 0)), length: 1)
-            let current = storage.attribute(.strikethroughStyle, at: probe.location, effectiveRange: nil) as? Int ?? 0
-            let next: Int = current != 0 ? 0 : NSUnderlineStyle.single.rawValue
-            let effective = range.length > 0 ? range : probe
-            _ = textView.shouldChangeText(in: effective, replacementString: "")
-            storage.addAttribute(.strikethroughStyle, value: next, range: effective)
-        }
-    }
+        let isQuote = (attributed.attribute(quoteKey, at: range.location, effectiveRange: nil) as? Bool) ?? false
+        let probeFont = attributed.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont ?? bodyFont()
+        let level = headingLevel(of: probeFont)
 
-    private static func isCodeFont(_ font: NSFont?) -> Bool {
-        guard let family = font?.familyName?.lowercased() else { return false }
-        return family.contains("menlo") || family.contains("mono")
-    }
+        let baseBold = level > 0
+        let baseItalic = false
+        let baseIsCode = false
 
-    private static func toggleCode(ranges: [NSRange], storage: NSTextStorage, textView: NSTextView) {
-        for range in ranges {
-            let probe = range.length > 0 ? range : NSRange(location: min(range.location, max(storage.length - 1, 0)), length: 1)
-            let turningOn = !isCodeFont(storage.attribute(.font, at: probe.location, effectiveRange: nil) as? NSFont)
-            let effective = range.length > 0 ? range : probe
-            _ = textView.shouldChangeText(in: effective, replacementString: "")
-            storage.enumerateAttribute(.font, in: effective) { value, subRange, _ in
-                guard let font = value as? NSFont else { return }
-                if turningOn {
-                    storage.addAttributes([
-                        .font: codeFont,
-                        .backgroundColor: NSColor.quaternarySystemFill,
-                    ], range: subRange)
-                } else {
-                    let restored = NSFontManager.shared.convert(bodyFont, toHaveTrait: fontTraitMask(font.fontDescriptor.symbolicTraits.intersection([.bold, .italic])))
-                    storage.addAttributes([
-                        .font: restored,
-                        .backgroundColor: NSColor.clear,
-                    ], range: subRange)
-                }
-            }
-        }
-    }
-
-    private static func toggleHeading(_ level: Int, ranges: [NSRange], storage: NSTextStorage, textView: NSTextView) {
-        for paragraph in paragraphRanges(around: ranges, in: storage) {
-            _ = textView.shouldChangeText(in: paragraph, replacementString: "")
-            let current = storage.attribute(headingKey, at: paragraph.location, effectiveRange: nil) as? Int
-            if current == level {
-                storage.removeAttribute(headingKey, range: paragraph)
-                storage.addAttribute(.font, value: bodyFont, range: paragraph)
-                storage.addAttribute(.paragraphStyle, value: plainParagraphStyle(), range: paragraph)
-            } else {
-                storage.addAttribute(headingKey, value: level, range: paragraph)
-                storage.addAttribute(.font, value: headingFont(level), range: paragraph)
-                storage.addAttribute(.paragraphStyle, value: headingParagraphStyle(), range: paragraph)
-            }
-        }
-    }
-
-    private static func toggleList(_ marker: NSTextList.MarkerFormat, ranges: [NSRange], storage: NSTextStorage, textView: NSTextView) {
-        for paragraph in paragraphRanges(around: ranges, in: storage) {
-            _ = textView.shouldChangeText(in: paragraph, replacementString: "")
-            let style = storage.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil) as? NSParagraphStyle
-            let existing = style?.textLists.first
-            let sameKind = existing.map { isDecimal($0) == (marker == .decimal) } ?? false
-            if sameKind {
-                let reset = plainParagraphStyle()
-                storage.addAttribute(.paragraphStyle, value: reset, range: paragraph)
-            } else {
-                storage.addAttribute(.paragraphStyle, value: listParagraphStyle(markerFormat: marker), range: paragraph)
-            }
-        }
-    }
-
-    private static func toggleQuote(ranges: [NSRange], storage: NSTextStorage, textView: NSTextView) {
-        for paragraph in paragraphRanges(around: ranges, in: storage) {
-            _ = textView.shouldChangeText(in: paragraph, replacementString: "")
-            let isQuote = (storage.attribute(quoteKey, at: paragraph.location, effectiveRange: nil) as? Bool) == true
+        if level > 0 {
+            output += String(repeating: "#", count: level) + " "
+        } else {
             if isQuote {
-                storage.removeAttribute(quoteKey, range: paragraph)
-                storage.addAttribute(.foregroundColor, value: NSColor.textColor, range: paragraph)
-                storage.addAttribute(.paragraphStyle, value: plainParagraphStyle(), range: paragraph)
-                removeTrait(.italic, paragraph: paragraph, storage: storage)
-            } else {
-                storage.addAttribute(quoteKey, value: true, range: paragraph)
-                storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: paragraph)
-                storage.addAttribute(.paragraphStyle, value: quoteParagraphStyle(), range: paragraph)
-                addItalic(paragraph: paragraph, storage: storage)
+                output += "> "
             }
         }
-    }
 
-    private static func addItalic(paragraph: NSRange, storage: NSTextStorage) {
-        let manager = NSFontManager.shared
-        storage.enumerateAttribute(.font, in: paragraph) { value, subRange, _ in
-            guard let font = value as? NSFont else { return }
-            storage.addAttribute(.font, value: manager.convert(font, toHaveTrait: .italicFontMask), range: subRange)
+        attributed.enumerateAttributes(in: range, options: []) { attributes, runRange, _ in
+            let relative = NSRange(location: runRange.location - range.location, length: runRange.length)
+            let runText = text.substring(with: relative)
+            guard !runText.isEmpty else { return }
+
+            let font = attributes[.font] as? NSFont ?? baseFont(level: level)
+            let runBold = font.fontDescriptor.symbolicTraits.contains(.bold)
+            let runItalic = font.fontDescriptor.symbolicTraits.contains(.italic)
+            let runIsCode = font.fontName.contains("Mono")
+
+            let isUnderline = (attributes[.underlineStyle] as? Int) == NSUnderlineStyle.single.rawValue
+            let isStrike = (attributes[.strikethroughStyle] as? Int) == NSUnderlineStyle.single.rawValue
+
+            var closing = ""
+
+            if isUnderline {
+                output += "<u>"
+                closing = "</u>" + closing
+            }
+            if runIsCode && !baseIsCode {
+                output += "`"
+                closing = "`" + closing
+            }
+            if runBold && !baseBold {
+                output += "**"
+                closing = "**" + closing
+            }
+            if runItalic && !baseItalic {
+                output += "*"
+                closing = "*" + closing
+            }
+            if isStrike {
+                output += "~~"
+                closing = "~~" + closing
+            }
+
+            output += runText
+            output += closing
         }
     }
 
-    private static func removeTrait(_ trait: NSFontDescriptor.SymbolicTraits, paragraph: NSRange, storage: NSTextStorage) {
-        let manager = NSFontManager.shared
-        storage.enumerateAttribute(.font, in: paragraph) { value, subRange, _ in
-            guard let font = value as? NSFont else { return }
-            storage.addAttribute(.font, value: manager.convert(font, toNotHaveTrait: fontTraitMask(trait)), range: subRange)
-        }
-    }
-
-    private static func insertRule(at location: Int, storage: NSTextStorage, textView: NSTextView) {
-        let safeLocation = min(max(location, 0), storage.length)
-        var insertion = NSMutableAttributedString(string: "\n", attributes: baseAttributes())
-        insertion.append(ruleParagraph())
-        insertion.append(NSAttributedString(string: "\n", attributes: baseAttributes()))
-        _ = textView.shouldChangeText(
-            in: NSRange(location: safeLocation, length: 0),
-            replacementString: insertion.string
-        )
-        storage.insert(insertion, at: safeLocation)
-        let newPosition = min(safeLocation + insertion.length, (textView.string as NSString).length)
-        textView.setSelectedRanges(
-            [NSValue(range: NSRange(location: newPosition, length: 0))],
-            affinity: .downstream,
-            stillSelecting: false
-        )
-    }
-
-    private static func ruleParagraph() -> NSAttributedString {
-        var attrs = baseAttributes()
-        attrs[.paragraphStyle] = ruleParagraphStyle()
-        attrs[ruleKey] = true
-        attrs[.foregroundColor] = NSColor.secondaryLabelColor
-        return NSAttributedString(string: "⸻", attributes: attrs)
+    private static func baseFont(level: Int) -> NSFont {
+        level > 0 ? headingFont(level: level) : bodyFont()
     }
 }
