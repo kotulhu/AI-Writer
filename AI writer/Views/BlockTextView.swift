@@ -39,6 +39,7 @@ final class BlockTextViewCoordinator: NSObject, NSTextViewDelegate {
     var block: Block?
     weak var store: ManuscriptStore?
     weak var modelContext: ModelContext?
+    var suppressFlushOnDismantle = false
 
     override init() {
         super.init()
@@ -180,8 +181,22 @@ final class BlockTextViewCoordinator: NSObject, NSTextViewDelegate {
         flush()
     }
 
-    func splitOffset() -> Int {
-        textView?.selectedRange().location ?? 0
+    /// Splits the edited text at the cursor: the part before stays in the current block,
+    /// the part after goes into a new block placed right after it.
+    func splitAtCursor() {
+        guard let tv = textView, let storage = tv.textStorage,
+              let block, let store, let modelContext, block.manuscript != nil else { return }
+        let loc = tv.selectedRange().location
+        guard loc > 0, loc < storage.length else { return }
+
+        let headAttrs = storage.attributedSubstring(from: NSRange(location: 0, length: loc))
+        let tailAttrs = storage.attributedSubstring(from: NSRange(location: loc, length: storage.length - loc))
+        let headMd = WriterText.serialize(headAttrs)
+        let tailMd = WriterText.serialize(tailAttrs)
+        guard !headMd.isEmpty, !tailMd.isEmpty else { return }
+
+        suppressFlushOnDismantle = true
+        store.splitBlock(block, head: headMd, tail: tailMd, context: modelContext)
     }
 
     func assertFocus() {
@@ -346,7 +361,7 @@ struct BlockTextViewRepresentable: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ scrollView: EditorScrollView, coordinator: BlockTextViewCoordinator) {
-        if coordinator.block != nil {
+        if coordinator.block != nil, !coordinator.suppressFlushOnDismantle {
             coordinator.flush(saveNow: true)
         }
         coordinator.textView = nil

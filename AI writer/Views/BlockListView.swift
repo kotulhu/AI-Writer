@@ -33,14 +33,25 @@ struct BlockListView: View {
         Group {
             if let manuscript = store.selectedManuscript {
                 List(selection: selection) {
-                    ForEach(blocks) { block in
-                        BlockRow(block: block)
-                            .tag(block.id)
-                            .onTapGesture(count: 2) {
-                                beginRename(block)
-                            }
+                    ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
+                        BlockRow(
+                            block: block,
+                            canMoveUp: index > 0,
+                            canMoveDown: index < blocks.count - 1
+                        ) { direction in
+                            store.moveBlock(block, direction, context: context)
+                        }
+                        .tag(block.id)
+                        .onTapGesture(count: 2) {
+                            beginRename(block)
+                        }
                             .contextMenu {
                                 Button("Переименовать…") { beginRename(block) }
+                                Button("Переместить вверх") { store.moveBlock(block, -1, context: context) }
+                                    .disabled(index == 0)
+                                Button("Переместить вниз") { store.moveBlock(block, 1, context: context) }
+                                    .disabled(index == blocks.count - 1)
+                                Divider()
                                 Button("Дублировать") { store.duplicateBlock(block, context: context) }
                                 Button("Объединить со следующим") { store.mergeBlockWithNext(block, context: context) }
                                 Divider()
@@ -100,12 +111,34 @@ struct BlockListView: View {
 
 private struct BlockRow: View {
     let block: Block
+    let canMoveUp: Bool
+    let canMoveDown: Bool
+    let onMove: (Int) -> Void
 
     var body: some View {
-        Text(block.title.isEmpty ? "Без названия" : block.title)
-            .font(.body)
-            .lineLimit(1)
-            .foregroundStyle(block.title.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
-            .padding(.vertical, 2)
+        HStack(spacing: 4) {
+            Text(block.title.isEmpty ? "Без названия" : block.title)
+                .font(.body)
+                .lineLimit(1)
+                .foregroundStyle(block.title.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+            Spacer(minLength: 2)
+            Button {
+                onMove(-1)
+            } label: {
+                Image(systemName: "chevron.up")
+            }
+            .buttonStyle(.borderless)
+            .disabled(!canMoveUp)
+            .help("Переместить вверх")
+            Button {
+                onMove(1)
+            } label: {
+                Image(systemName: "chevron.down")
+            }
+            .buttonStyle(.borderless)
+            .disabled(!canMoveDown)
+            .help("Переместить вниз")
+        }
+        .padding(.vertical, 2)
     }
 }

@@ -108,6 +108,23 @@ final class ManuscriptStore {
         try? context.save()
     }
 
+    /// Moves a block one position up (-1) or down (+1) by swapping its order with the neighbour.
+    func moveBlock(_ block: Block, _ direction: Int, context: ModelContext) {
+        guard let manuscript = block.manuscript else { return }
+        let blocks = manuscript.orderedBlocks
+        guard let idx = blocks.firstIndex(where: { $0.id == block.id }) else { return }
+        let target = idx + direction
+        guard target >= 0, target < blocks.count else { return }
+        let neighbor = blocks[target]
+        let temp = block.order
+        block.order = neighbor.order
+        neighbor.order = temp
+        block.updatedAt = .now
+        neighbor.updatedAt = .now
+        manuscript.updatedAt = .now
+        try? context.save()
+    }
+
     func deleteBlock(_ block: Block, context: ModelContext) {
         let blocks = block.manuscript?.orderedBlocks ?? []
         if let idx = blocks.firstIndex(where: { $0.id == block.id }) {
@@ -147,15 +164,14 @@ final class ManuscriptStore {
         try? context.save()
     }
 
-    func splitBlock(_ block: Block, at offset: Int, context: ModelContext) {
+    /// Splits a block: `head` stays in the original block, `tail` goes into a new
+    /// block placed right after it (order midpoint with the current next block).
+    func splitBlock(_ block: Block, head: String, tail: String, context: ModelContext) {
         guard let manuscript = block.manuscript else { return }
+        saveTask?.cancel()
+        saveTask = nil
         let blocks = manuscript.orderedBlocks
         guard let idx = blocks.firstIndex(where: { $0.id == block.id }) else { return }
-        let nsText = block.content as NSString
-        let safeOffset = min(max(offset, 0), block.content.utf16.count)
-        let head = nsText.substring(to: safeOffset)
-        let tail = nsText.substring(from: safeOffset)
-
         let nextOrder = idx + 1 < blocks.count ? blocks[idx + 1].order : block.order + 1
         let newOrder = (block.order + nextOrder) / 2.0
 

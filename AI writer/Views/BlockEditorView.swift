@@ -72,7 +72,6 @@ struct BlockEditorView: View {
     }
 
     private func splitBlock() {
-        let offset = BlockTextViewCoordinator.current?.splitOffset() ?? 0
-        store.splitBlock(block, at: offset, context: context)
+        BlockTextViewCoordinator.current?.splitAtCursor()
     }
 }
