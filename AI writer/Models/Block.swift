@@ -12,6 +12,9 @@ final class Block {
 
     var manuscript: Manuscript?
 
+    @Relationship(deleteRule: .cascade, inverse: \BlockVersion.block)
+    var versions: [BlockVersion] = []
+
     init(
         title: String = "",
         content: String = "",
@@ -26,5 +29,6 @@ final class Block {
         self.createdAt = now
         self.updatedAt = now
         self.manuscript = manuscript
+        self.versions = []
     }
 }

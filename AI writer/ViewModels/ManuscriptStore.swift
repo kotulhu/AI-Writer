@@ -125,6 +125,50 @@ final class ManuscriptStore {
         try? context.save()
     }
 
+    // MARK: - Versions
+
+    /// Snapshot of the current block state. Returns nil when the block has no content.
+    @discardableResult
+    func createVersion(for block: Block, context: ModelContext) -> BlockVersion? {
+        let content = block.content
+        guard !content.isEmpty else { return nil }
+        let version = BlockVersion(content: content, title: block.title, createdAt: .now)
+        version.block = block
+        context.insert(version)
+        pruneVersions(for: block, context: context)
+        block.updatedAt = .now
+        try? context.save()
+        return version
+    }
+
+    /// Keeps at most 10 versions; oldest non-pinned versions are removed first.
+    private func pruneVersions(for block: Block, context: ModelContext) {
+        var versions = block.versions.sorted { $0.createdAt < $1.createdAt }
+        while versions.count > 10 {
+            guard let idx = versions.firstIndex(where: { !$0.isPinned }) else { break }
+            context.delete(versions[idx])
+            versions.remove(at: idx)
+        }
+    }
+
+    /// Copies a version into the block. The current (pre-restore) state is preserved
+    /// as a new version so the history is not erased.
+    func restoreVersion(_ version: BlockVersion, context: ModelContext) {
+        guard let block = version.block else { return }
+        createVersion(for: block, context: context)
+        block.content = version.content
+        if let title = version.title, !title.isEmpty {
+            block.title = title
+        }
+        block.updatedAt = .now
+        try? context.save()
+    }
+
+    func setVersionPinned(_ version: BlockVersion, _ pinned: Bool, context: ModelContext) {
+        version.isPinned = pinned
+        try? context.save()
+    }
+
     func deleteBlock(_ block: Block, context: ModelContext) {
         let blocks = block.manuscript?.orderedBlocks ?? []
         if let idx = blocks.firstIndex(where: { $0.id == block.id }) {

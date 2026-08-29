@@ -40,6 +40,8 @@ final class BlockTextViewCoordinator: NSObject, NSTextViewDelegate {
     weak var store: ManuscriptStore?
     weak var modelContext: ModelContext?
     var suppressFlushOnDismantle = false
+    var isReadOnly = false
+    var baselineContent: String?
 
     override init() {
         super.init()
@@ -51,6 +53,15 @@ final class BlockTextViewCoordinator: NSObject, NSTextViewDelegate {
         return WriterText.serialize(storage)
     }
 
+    /// Prepares the coordinator after the NSView was created.
+    func configure(block: Block, store: ManuscriptStore, modelContext: ModelContext, initialContent: String, isReadOnly: Bool) {
+        self.block = block
+        self.store = store
+        self.modelContext = modelContext
+        self.isReadOnly = isReadOnly
+        self.baselineContent = isReadOnly ? nil : initialContent
+    }
+
     // MARK: NSTextViewDelegate
 
     func textDidChange(_ notification: Notification) {
@@ -58,13 +69,38 @@ final class BlockTextViewCoordinator: NSObject, NSTextViewDelegate {
     }
 
     func flush(saveNow: Bool = false) {
-        guard let block, let modelContext else { return }
+        guard !isReadOnly, let block, let modelContext else { return }
         let md = markdown
         if saveNow {
             store?.saveNow(block, content: md, context: modelContext)
         } else {
             store?.scheduleAutoSave(block, content: md, context: modelContext)
         }
+    }
+
+    // MARK: - Version snapshots
+
+    /// Saves the current text as a version if it differs from the last snapshot. Called
+    /// when focus leaves the editor, on teardown, and by the manual save button.
+    @discardableResult
+    func createVersionIfChanged() -> Bool {
+        guard !isReadOnly, let block, let store, let modelContext else { return false }
+        let current = block.content
+        if current == baselineContent { return false }
+        baselineContent = current
+        return store.createVersion(for: block, context: modelContext) != nil
+    }
+
+    func handleFocusLost() {
+        guard !isReadOnly else { return }
+        flush(saveNow: true)
+        createVersionIfChanged()
+    }
+
+    func saveVersionManually() {
+        guard !isReadOnly else { return }
+        flush(saveNow: true)
+        createVersionIfChanged()
     }
 
     // MARK: Formatting commands (invoked from the SwiftUI toolbar)
@@ -243,6 +279,14 @@ final class BlockTextViewEditor: NSTextView {
         super.mouseDown(with: event)
     }
 
+    override func resignFirstResponder() -> Bool {
+        let result = super.resignFirstResponder()
+        if result {
+            (delegate as? BlockTextViewCoordinator)?.handleFocusLost()
+        }
+        return result
+    }
+
     func bringToFront() {
         window?.makeKey()
         window?.makeFirstResponder(self)
@@ -306,6 +350,8 @@ struct BlockTextViewRepresentable: NSViewRepresentable {
     var block: Block
     var store: ManuscriptStore
     var modelContext: ModelContext
+    var editedContent: String? = nil
+    var isReadOnly: Bool = false
 
     func makeCoordinator() -> BlockTextViewCoordinator {
         BlockTextViewCoordinator()
@@ -328,21 +374,29 @@ struct BlockTextViewRepresentable: NSViewRepresentable {
             frame: NSRect(x: 0, y: 0, width: 640, height: 480),
             textContainer: container
         )
-        textView.textStorage?.setAttributedString(WriterText.render(markdown: block.content))
+        let initialContent = editedContent ?? block.content
+        textView.textStorage?.setAttributedString(WriterText.render(markdown: initialContent))
         if textView.textStorage == nil {
             EditorDiag.log("Editor WARN makeNSView textStorage is nil after explicit container")
         }
+        textView.isEditable = !isReadOnly
         textView.setSelectedRange(NSRange(location: 0, length: 0))
-        textView.delegate = context.coordinator
+        if !isReadOnly {
+            textView.delegate = context.coordinator
+        }
 
         scroll.documentView = textView
 
         context.coordinator.textView = textView
-        context.coordinator.block = block
-        context.coordinator.store = store
-        context.coordinator.modelContext = modelContext
+        context.coordinator.configure(
+            block: block,
+            store: store,
+            modelContext: modelContext,
+            initialContent: initialContent,
+            isReadOnly: isReadOnly
+        )
 
-        EditorDiag.log("Editor makeNSView created textView")
+        EditorDiag.log("Editor makeNSView created textView readOnly=\(isReadOnly)")
         return scroll
     }
 
@@ -352,6 +406,7 @@ struct BlockTextViewRepresentable: NSViewRepresentable {
         coordinator.store = store
         coordinator.modelContext = modelContext
 
+        guard !isReadOnly, editedContent == nil else { return }
         if let textView = coordinator.textView {
             let target = WriterText.render(markdown: block.content)
             if (textView.textStorage?.string ?? "") != target.string {
@@ -361,8 +416,9 @@ struct BlockTextViewRepresentable: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ scrollView: EditorScrollView, coordinator: BlockTextViewCoordinator) {
-        if coordinator.block != nil, !coordinator.suppressFlushOnDismantle {
+        if coordinator.block != nil, !coordinator.suppressFlushOnDismantle, !coordinator.isReadOnly {
             coordinator.flush(saveNow: true)
+            coordinator.createVersionIfChanged()
         }
         coordinator.textView = nil
         BlockTextViewCoordinator.current = nil
