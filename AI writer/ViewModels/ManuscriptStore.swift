@@ -2,11 +2,55 @@ import Foundation
 import SwiftData
 import Observation
 
+enum AppSection: String, CaseIterable, Hashable, Identifiable {
+    case books
+    case characters
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .books: "Книги"
+        case .characters: "Персонажи"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .books: "books.vertical"
+        case .characters: "person.2"
+        }
+    }
+}
+
+enum WorkspaceMode: String, CaseIterable, Identifiable {
+    case blocks
+    case characters
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .blocks: "Блоки"
+        case .characters: "Персонажи"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .blocks: "doc.text"
+        case .characters: "person.2"
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class ManuscriptStore {
     var selectedManuscript: Manuscript?
     var selectedBlock: Block?
+    var appSection: AppSection = .books
+    var workspaceMode: WorkspaceMode = .blocks
 
     // MARK: - Debounced save
 
@@ -43,6 +87,7 @@ final class ManuscriptStore {
         let manuscript = Manuscript(title: title)
         context.insert(manuscript)
         let firstBlock = Block(title: newBlockTitle(for: manuscript), order: 0, manuscript: manuscript)
+        manuscript.blocks.append(firstBlock)
         context.insert(firstBlock)
         selectedManuscript = manuscript
         selectedBlock = firstBlock
@@ -54,6 +99,16 @@ final class ManuscriptStore {
         if selectedManuscript?.id == manuscript.id {
             selectedManuscript = nil
             selectedBlock = nil
+        }
+        // SwiftData to-many cascade is unreliable on this SDK — remove children explicitly.
+        for character in manuscript.characters {
+            context.delete(character)
+        }
+        for block in manuscript.blocks {
+            for version in block.versions {
+                context.delete(version)
+            }
+            context.delete(block)
         }
         context.delete(manuscript)
         try? context.save()
@@ -92,6 +147,7 @@ final class ManuscriptStore {
             newOrder = (blocks.last?.order ?? 0) + 1
         }
         let block = Block(title: newBlockTitle(for: manuscript), order: newOrder, manuscript: manuscript)
+        manuscript.blocks.append(block)
         context.insert(block)
         manuscript.updatedAt = .now
         try? context.save()
@@ -169,6 +225,73 @@ final class ManuscriptStore {
         try? context.save()
     }
 
+    // MARK: - Character CRUD
+
+    @discardableResult
+    func addCharacter(to manuscript: Manuscript, context: ModelContext) -> Character {
+        let character = Character(manuscript: manuscript)
+        manuscript.characters.append(character)
+        context.insert(character)
+        manuscript.updatedAt = .now
+        try? context.save()
+        return character
+    }
+
+    @discardableResult
+    func duplicateCharacter(_ character: Character, context: ModelContext) -> Character {
+        let copy = Character(
+            manuscript: character.manuscript,
+            name: character.name,
+            species: character.species,
+            isMale: character.isMale,
+            age: character.age,
+            height: character.height,
+            weight: character.weight,
+            hairColor: character.hairColor,
+            hairLength: character.hairLength,
+            appearanceDescription: character.appearanceDescription,
+            clothingPreference: character.clothingPreference
+        )
+        if let manuscript = character.manuscript {
+            manuscript.characters.append(copy)
+        }
+        context.insert(copy)
+        character.manuscript?.updatedAt = .now
+        try? context.save()
+        return copy
+    }
+
+    func deleteCharacter(_ character: Character, context: ModelContext) {
+        character.manuscript?.updatedAt = .now
+        context.delete(character)
+        try? context.save()
+    }
+
+    // MARK: - Debounced character save
+
+    private var characterSaveTask: Task<Void, Never>?
+    private let characterSaveDelay: Duration = .milliseconds(600)
+
+    func scheduleCharacterSave(_ character: Character, context: ModelContext) {
+        characterSaveTask?.cancel()
+        characterSaveTask = Task { [weak self] in
+            try? await Task.sleep(for: self?.characterSaveDelay ?? .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            character.updatedAt = .now
+            character.manuscript?.updatedAt = .now
+            try? context.save()
+        }
+    }
+
+    /// Writes immediately — used when the detail view is closed so no pending edits are lost.
+    func saveCharacterNow(_ character: Character, context: ModelContext) {
+        characterSaveTask?.cancel()
+        characterSaveTask = nil
+        character.updatedAt = .now
+        character.manuscript?.updatedAt = .now
+        try? context.save()
+    }
+
     func deleteBlock(_ block: Block, context: ModelContext) {
         let blocks = block.manuscript?.orderedBlocks ?? []
         if let idx = blocks.firstIndex(where: { $0.id == block.id }) {
@@ -188,6 +311,7 @@ final class ManuscriptStore {
         guard let idx = blocks.firstIndex(where: { $0.id == block.id }) else { return }
         let nextOrder = idx + 1 < blocks.count ? blocks[idx + 1].order : block.order + 1
         let duplicate = Block(title: block.title, content: block.content, order: (block.order + nextOrder) / 2.0, manuscript: manuscript)
+        manuscript.blocks.append(duplicate)
         context.insert(duplicate)
         manuscript.updatedAt = .now
         try? context.save()
@@ -222,6 +346,7 @@ final class ManuscriptStore {
         block.content = head
         block.updatedAt = .now
         let newBlock = Block(title: newBlockTitle(for: manuscript), content: tail, order: newOrder, manuscript: manuscript)
+        manuscript.blocks.append(newBlock)
         context.insert(newBlock)
         manuscript.updatedAt = .now
         try? context.save()

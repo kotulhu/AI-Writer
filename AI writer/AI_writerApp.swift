@@ -8,7 +8,7 @@ struct AI_writerApp: App {
     init() {
         EditorDiag.log("App.init start")
         do {
-            container = try ModelContainer(for: Manuscript.self, Block.self)
+            container = try ModelContainer(for: Manuscript.self, Block.self, Character.self)
             EditorDiag.log("App.init container OK")
         } catch {
             EditorDiag.log("App.init fatal: \(error)")
