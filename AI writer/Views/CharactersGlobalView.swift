@@ -55,11 +55,39 @@ struct CharactersGlobalView: View {
                 List {
                     ForEach(manuscripts) { manuscript in
                         let characters = manuscript.orderedCharacters.filter(matching)
-                        if !characters.isEmpty {
-                            Section {
+                        Section {
+                            if characters.isEmpty {
+                                HStack {
+                                    Text(searchText.isEmpty ? "Персонажей пока нет" : "Ничего не найдено")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Button {
+                                        store.addCharacter(to: manuscript, context: context)
+                                    } label: {
+                                        Image(systemName: "plus")
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Добавить персонажа")
+                                }
+                                .padding(.vertical, 2)
+                            } else {
                                 ForEach(characters) { character in
-                                    NavigationLink(value: character) {
-                                        CharacterRowView(character: character)
+                                    HStack(spacing: 4) {
+                                        NavigationLink(value: character) {
+                                            CharacterRowView(character: character)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                                .contentShape(Rectangle())
+                                        }
+                                        Button {
+                                            store.deleteCharacter(character, context: context)
+                                        } label: {
+                                            Image(systemName: "trash")
+                                                .font(.caption)
+                                                .padding(4)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("Удалить персонажа")
                                     }
                                     .contextMenu {
                                         Button("Дублировать") {
@@ -71,9 +99,9 @@ struct CharactersGlobalView: View {
                                         }
                                     }
                                 }
-                            } header: {
-                                Text("\(manuscript.title) (\(characters.count))")
                             }
+                        } header: {
+                            Text("\(manuscript.title) (\(characters.count))")
                         }
                     }
                 }
@@ -87,13 +115,13 @@ struct CharactersGlobalView: View {
         .toolbar {
             ToolbarItem {
                 Button {
-                    guard let manuscript = store.selectedManuscript else { return }
+                    guard let manuscript = store.selectedManuscript ?? manuscripts.first else { return }
                     store.addCharacter(to: manuscript, context: context)
                 } label: {
                     Label("Персонаж", systemImage: "plus")
                 }
-                .help("Добавить персонажа в выбранную рукопись")
-                .disabled(store.selectedManuscript == nil)
+                .help("Добавить персонажа")
+                .disabled(manuscripts.isEmpty)
             }
         }
     }

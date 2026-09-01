@@ -6,18 +6,14 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var store = ManuscriptStore()
     @State private var navPath: [Character] = []
+    @State private var isSectionBarVisible = true
 
     var body: some View {
-        NavigationSplitView {
-            List(selection: $store.appSection) {
-                ForEach(AppSection.allCases) { section in
-                    Label(section.title, systemImage: section.icon)
-                        .tag(section)
-                }
-            }
-            .navigationSplitViewColumnWidth(min: 170, ideal: 210)
-            .navigationTitle("Разделы")
-        } detail: {
+        VStack(spacing: 0) {
+            Divider()
+            TopSectionBar(store: store, isVisible: $isSectionBarVisible)
+            Divider()
+
             NavigationStack(path: $navPath) {
                 Group {
                     switch store.appSection {
@@ -38,6 +34,95 @@ struct ContentView: View {
                 BlockTextViewCoordinator.current?.flush(saveNow: true)
             }
         }
+    }
+}
+
+/// Горизонтальная панель выбора раздела с возможностью сворачивания.
+struct TopSectionBar: View {
+    @Bindable var store: ManuscriptStore
+    @Binding var isVisible: Bool
+
+    var body: some View {
+        if isVisible {
+            HStack(spacing: 4) {
+                ForEach(AppSection.allCases) { section in
+                    Button {
+                        store.appSection = section
+                    } label: {
+                        Label(section.title, systemImage: section.icon)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(
+                                store.appSection == section
+                                    ? AnyShapeStyle(Color.accentColor.opacity(0.9))
+                                    : AnyShapeStyle(.clear),
+                                in: Capsule()
+                            )
+                            .foregroundStyle(store.appSection == section ? Color.white : Color.primary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
+
+                if store.appSection == .books {
+                    toggleButton("Показать/скрыть книги", systemImage: "sidebar.left", isOn: $store.isBooksPaneVisible)
+                    toggleButton("Показать/скрыть блоки", systemImage: "sidebar.right", isOn: $store.isBlocksPaneVisible)
+                }
+
+                Button {
+                    isVisible = false
+                } label: {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(6)
+                }
+                .buttonStyle(.plain)
+                .help("Свернуть меню")
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+        } else {
+            HStack(spacing: 2) {
+                Button {
+                    isVisible = true
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(6)
+                }
+                .buttonStyle(.plain)
+                .help("Развернуть меню")
+
+                Image(systemName: store.appSection.icon)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(store.appSection.title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
+
+                if store.appSection == .books {
+                    toggleButton("Показать/скрыть книги", systemImage: "sidebar.left", isOn: $store.isBooksPaneVisible)
+                    toggleButton("Показать/скрыть блоки", systemImage: "sidebar.right", isOn: $store.isBlocksPaneVisible)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+        }
+    }
+
+    private func toggleButton(_ help: String, systemImage: String, isOn: Binding<Bool>) -> some View {
+        Button {
+            isOn.wrappedValue.toggle()
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .semibold))
+                .padding(5)
+                .background(isOn.wrappedValue ? Color.accentColor.opacity(0.25) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 }
 
@@ -82,11 +167,15 @@ struct BooksWorkspace: View {
 
     private var blocksWorkspace: some View {
         HSplitView {
-            ManuscriptListView(store: store)
-                .frame(minWidth: 180, idealWidth: 230)
+            if store.isBooksPaneVisible {
+                ManuscriptListView(store: store)
+                    .frame(minWidth: 180, idealWidth: 230)
+            }
 
-            BlockListView(store: store)
-                .frame(minWidth: 150, idealWidth: 190)
+            if store.isBlocksPaneVisible {
+                BlockListView(store: store)
+                    .frame(minWidth: 150, idealWidth: 190)
+            }
 
             Group {
                 if let block = store.selectedBlock {

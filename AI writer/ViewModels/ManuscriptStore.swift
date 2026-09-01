@@ -51,6 +51,8 @@ final class ManuscriptStore {
     var selectedBlock: Block?
     var appSection: AppSection = .books
     var workspaceMode: WorkspaceMode = .blocks
+    var isBooksPaneVisible = true
+    var isBlocksPaneVisible = true
 
     // MARK: - Debounced save
 

@@ -41,6 +41,52 @@ struct CharacterCardView: View {
     }
 }
 
+struct CharacterCardItem: View {
+    let character: Character
+    let onDelete: () -> Void
+    let onDuplicate: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            NavigationLink(value: character) {
+                CharacterCardView(character: character)
+            }
+            .buttonStyle(.plain)
+            .allowsHitTesting(isHovering ? false : true)
+
+            if isHovering {
+                Button {
+                    onDelete()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(6)
+                        .background(.regularMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Удалить персонажа")
+                .padding(8)
+            }
+        }
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.12)) {
+                isHovering = hovering
+            }
+        }
+        .contextMenu {
+            Button("Дублировать") {
+                onDuplicate()
+            }
+            Divider()
+            Button("Удалить персонажа", role: .destructive) {
+                onDelete()
+            }
+        }
+    }
+}
+
 struct CharacterListView: View {
     @Bindable var store: ManuscriptStore
     @Environment(\.modelContext) private var context
@@ -66,19 +112,11 @@ struct CharacterListView: View {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], spacing: 12) {
                         ForEach(characters) { character in
-                            NavigationLink(value: character) {
-                                CharacterCardView(character: character)
-                            }
-                            .buttonStyle(.plain)
-                            .contextMenu {
-                                Button("Дублировать") {
-                                    store.duplicateCharacter(character, context: context)
-                                }
-                                Divider()
-                                Button("Удалить персонажа", role: .destructive) {
-                                    store.deleteCharacter(character, context: context)
-                                }
-                            }
+                            CharacterCardItem(
+                                character: character,
+                                onDelete: { store.deleteCharacter(character, context: context) },
+                                onDuplicate: { store.duplicateCharacter(character, context: context) }
+                            )
                         }
                     }
                     .padding(12)
