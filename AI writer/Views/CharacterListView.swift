@@ -43,6 +43,7 @@ struct CharacterCardView: View {
 
 struct CharacterCardItem: View {
     let character: Character
+    let store: ManuscriptStore
     let onDelete: () -> Void
     let onDuplicate: () -> Void
 
@@ -50,23 +51,38 @@ struct CharacterCardItem: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            NavigationLink(value: character) {
+            NavigationLink {
+                CharacterDetailView(character: character, store: store)
+            } label: {
                 CharacterCardView(character: character)
             }
             .buttonStyle(.plain)
             .allowsHitTesting(isHovering ? false : true)
 
             if isHovering {
-                Button {
-                    onDelete()
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 11, weight: .semibold))
-                        .padding(6)
-                        .background(.regularMaterial, in: Circle())
+                HStack(spacing: 4) {
+                    NavigationLink {
+                        CharacterDetailView(character: character, store: store)
+                    } label: {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 11, weight: .semibold))
+                            .padding(6)
+                            .background(.regularMaterial, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Редактировать персонажа")
+
+                    Button {
+                        onDelete()
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11, weight: .semibold))
+                            .padding(6)
+                            .background(.regularMaterial, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Удалить персонажа")
                 }
-                .buttonStyle(.plain)
-                .help("Удалить персонажа")
                 .padding(8)
             }
         }
@@ -114,6 +130,7 @@ struct CharacterListView: View {
                         ForEach(characters) { character in
                             CharacterCardItem(
                                 character: character,
+                                store: store,
                                 onDelete: { store.deleteCharacter(character, context: context) },
                                 onDuplicate: { store.duplicateCharacter(character, context: context) }
                             )
@@ -124,9 +141,6 @@ struct CharacterListView: View {
             }
         }
         .searchable(text: $searchText, placement: .toolbar, prompt: "Поиск по имени")
-        .navigationDestination(for: Character.self) { character in
-            CharacterDetailView(character: character, store: store)
-        }
         .navigationTitle(manuscript.title)
         .toolbar {
             ToolbarItem {

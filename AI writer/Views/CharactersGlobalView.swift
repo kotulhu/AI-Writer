@@ -74,11 +74,23 @@ struct CharactersGlobalView: View {
                             } else {
                                 ForEach(characters) { character in
                                     HStack(spacing: 4) {
-                                        NavigationLink(value: character) {
+                                        NavigationLink {
+                                            CharacterDetailView(character: character, store: store)
+                                        } label: {
                                             CharacterRowView(character: character)
                                                 .frame(maxWidth: .infinity, alignment: .leading)
                                                 .contentShape(Rectangle())
                                         }
+                                        NavigationLink {
+                                            CharacterDetailView(character: character, store: store)
+                                        } label: {
+                                            Image(systemName: "pencil")
+                                                .font(.caption)
+                                                .padding(4)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("Редактировать персонажа")
+
                                         Button {
                                             store.deleteCharacter(character, context: context)
                                         } label: {
@@ -108,9 +120,6 @@ struct CharactersGlobalView: View {
             }
         }
         .searchable(text: $searchText, placement: .toolbar, prompt: "Поиск по имени")
-        .navigationDestination(for: Character.self) { character in
-            CharacterDetailView(character: character, store: store)
-        }
         .navigationTitle("Персонажи")
         .toolbar {
             ToolbarItem {
