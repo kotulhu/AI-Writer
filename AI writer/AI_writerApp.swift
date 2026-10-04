@@ -4,14 +4,16 @@ import SwiftUI
 @main
 struct AI_writerApp: App {
     let container: ModelContainer
+    /// Подключение к AI (OpenRouter): ключ в Keychain, модель в UserDefaults.
+    @StateObject private var connectionStore = AIConnectionStore.shared
 
     init() {
-        EditorDiag.log("App.init start")
+        AILog.store("Запуск приложения")
         do {
             container = try ModelContainer(for: Manuscript.self, Block.self, Character.self)
-            EditorDiag.log("App.init container OK")
+            AILog.store("Хранилище данных создано")
         } catch {
-            EditorDiag.log("App.init fatal: \(error)")
+            AILog.store("Не удалось создать хранилище данных: \(error)")
             fatalError("Не удалось создать хранилище данных: \(error)")
         }
     }
@@ -19,9 +21,7 @@ struct AI_writerApp: App {
     var body: some Scene {
         WindowGroup("AI Writer") {
             ContentView()
-                .onAppear {
-                    EditorDiag.log("ContentView.onAppear")
-                }
+                .environmentObject(connectionStore)
         }
         .modelContainer(container)
         .defaultSize(width: 1080, height: 680)

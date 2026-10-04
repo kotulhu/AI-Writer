@@ -82,6 +82,25 @@ final class ManuscriptStore {
         try? context.save()
     }
 
+    /// Дописывает текст в конец блока — например, ответ AI из чата.
+    ///
+    /// Пустая строка отделяет вставку от прежнего текста: без неё Markdown
+    /// склеит последний абзац с началом ответа. Пишем сразу, через
+    /// `saveNow`, потому что это разовое осознанное действие автора, а не
+    /// очередной набор keystrokes. `saveNow` заодно гасит висящий дебаунс
+    /// редактора, иначе он перезапишет вставку старым буфером.
+    func appendToBlock(_ block: Block, text: String, context: ModelContext) {
+        let addition = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !addition.isEmpty else { return }
+        let current = block.content
+        // Проверяем не isEmpty, а наличие непробельного текста: блок из одних
+        // пробелов не пустой, но приписывать к нему через пустую строку
+        // бессмысленно — в текст попадёт мусор и лишний перенос.
+        let hasText = !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let merged = hasText ? current + "\n\n" + addition : addition
+        saveNow(block, content: merged, context: context)
+    }
+
     // MARK: - Manuscript CRUD
 
     @discardableResult

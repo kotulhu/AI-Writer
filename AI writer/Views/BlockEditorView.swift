@@ -187,7 +187,7 @@ struct BlockEditorView: View {
             Button {
                 BlockTextViewCoordinator.current?.saveVersionManually()
             } label: {
-                Label("Сохранить версию", systemImage: "clock.badge.plus")
+                Label("Сохранить версию", systemImage: "clock.arrow.2.circlepath")
             }
             .buttonStyle(.borderless)
             .help("Сохранить текущий текст как версию")

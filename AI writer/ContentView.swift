@@ -41,6 +41,7 @@ struct ContentView: View {
 struct TopSectionBar: View {
     @Bindable var store: ManuscriptStore
     @Binding var isVisible: Bool
+    @State private var isConnectionWindowPresented = false
 
     var body: some View {
         if isVisible {
@@ -68,6 +69,9 @@ struct TopSectionBar: View {
                     toggleButton("Показать/скрыть книги", systemImage: "sidebar.left", isOn: $store.isBooksPaneVisible)
                     toggleButton("Показать/скрыть блоки", systemImage: "sidebar.right", isOn: $store.isBlocksPaneVisible)
                 }
+
+                aiMenu
+                .padding(.trailing, 6)
 
                 Button {
                     isVisible = false
@@ -106,9 +110,33 @@ struct TopSectionBar: View {
                     toggleButton("Показать/скрыть книги", systemImage: "sidebar.left", isOn: $store.isBooksPaneVisible)
                     toggleButton("Показать/скрыть блоки", systemImage: "sidebar.right", isOn: $store.isBlocksPaneVisible)
                 }
+
+                aiMenu
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
+        }
+    }
+
+    /// Меню «AI»: вход в OpenRouter через браузер.
+    private var aiMenu: some View {
+        Menu {
+            Button {
+                isConnectionWindowPresented = true
+            } label: {
+                Label("Подключение…", systemImage: "link")
+            }
+        } label: {
+            Label("AI", systemImage: "sparkles")
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color.accentColor.opacity(0.12), in: Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Подключение AI-провайдера OpenRouter")
+        .sheet(isPresented: $isConnectionWindowPresented) {
+            ConnectionView()
         }
     }
 
@@ -166,29 +194,34 @@ struct BooksWorkspace: View {
     }
 
     private var blocksWorkspace: some View {
-        HSplitView {
-            if store.isBooksPaneVisible {
-                ManuscriptListView(store: store)
-                    .frame(minWidth: 180, idealWidth: 230)
-            }
-
-            if store.isBlocksPaneVisible {
-                BlockListView(store: store)
-                    .frame(minWidth: 150, idealWidth: 190)
-            }
-
-            Group {
-                if let block = store.selectedBlock {
-                    BlockEditorView(store: store, block: block)
-                } else {
-                    ContentUnavailableView(
-                        "Нет выбранного блока",
-                        systemImage: "square.and.pencil",
-                        description: Text("Создайте книгу и блок, чтобы начать писать.")
-                    )
+        VStack(spacing: 0) {
+            HSplitView {
+                if store.isBooksPaneVisible {
+                    ManuscriptListView(store: store)
+                        .frame(minWidth: 180, idealWidth: 230)
                 }
+
+                if store.isBlocksPaneVisible {
+                    BlockListView(store: store)
+                        .frame(minWidth: 150, idealWidth: 190)
+                }
+
+                Group {
+                    if let block = store.selectedBlock {
+                        BlockEditorView(store: store, block: block)
+                    } else {
+                        ContentUnavailableView(
+                            "Нет выбранного блока",
+                            systemImage: "square.and.pencil",
+                            description: Text("Создайте книгу и блок, чтобы начать писать.")
+                        )
+                    }
+                }
+                .frame(minWidth: 420)
             }
-            .frame(minWidth: 420)
+
+            Divider()
+            ChatPanelView(store: store)
         }
         .onChange(of: store.selectedManuscript?.persistentModelID) {
             guard let manuscript = store.selectedManuscript else {

@@ -27,6 +27,15 @@ struct CharacterCardView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
+            if let manuscript = character.manuscript {
+                HStack(spacing: 3) {
+                    Image(systemName: "book.closed")
+                    Text(manuscript.title)
+                }
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+            }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
