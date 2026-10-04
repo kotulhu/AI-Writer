@@ -68,7 +68,7 @@ An OpenRouter account (free) for AI features
 From Source
 
 bash
-git clone https://github.com/kotulhu/novel-editor.git
+git clone git@github.com:kotulhu/AI-Writer.git
 cd novel-editor
 open NovelEditor.xcodeproj
 Then press ⌘+R in Xcode.
